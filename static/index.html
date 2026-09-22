@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ripfire Studio Local</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=13">
+</head>
+<body class="is-home">
+<header class="topbar">
+  <img class="brand-logo" src="/static/img/logo.png" alt="Ripfire Studio">
+  <nav>
+    <button class="nav-btn active" data-tab="home">Início</button>
+    <button class="nav-btn" data-tab="editor">Personalizar</button>
+    <button class="nav-btn" data-tab="digital">Artes digitais</button>
+    <button class="nav-btn" data-tab="admin" hidden>Admin</button>
+  </nav>
+</header>
+<main>
+  <section id="home" class="tab active">
+    <div class="hero">
+      <div>
+        <div class="eyebrow" hidden>PERSONALIZAÇÃO SOB DEMANDA</div>
+        <h1 hidden>Crie, envie ou escolha sua arte.</h1>
+        <button id="startCustomize" class="primary" hidden>Começar a personalizar</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="editor" class="tab">
+    <div class="editor-layout" id="editorLayout">
+      <aside class="panel">
+        <h2>Tipo de Produto</h2>
+        <label>Modalidade</label>
+        <select id="saleType">
+          <option value="DTF_ONLY">Somente DTF</option>
+          <option value="DTF_PLUS_SHIRT">DTF + Camiseta</option>
+          <option value="FINISHED_SHIRT">Camiseta pronta</option>
+        </select>
+        <div id="shirtOptions" class="shirt-only">
+          <label>Modelo</label>
+          <div id="shirtModelTabs" class="model-tabs"></div>
+          <label>Cor</label><select id="shirtColor"></select>
+          <label>Quantidades por tamanho</label><div id="sizeGrid"></div>
+        </div>
+        <div class="shirt-only">
+          <label>Quantidade de DTF</label><input id="dtfQty" type="number" min="1" value="1">
+          <label>Largura final da arte (cm)</label><input id="designWidthCm" type="number" min="2" max="58.5" step="0.5" value="28">
+        </div>
+        <div class="price-card"><span>Total estimado</span><strong id="priceTotal">R$ 0,00</strong></div>
+      </aside>
+
+      <section class="workspace shirt-only" id="shirtWorkspace">
+        <div class="toolbar">
+          <div id="sideTabs" class="side-tabs">
+            <button type="button" class="side-tab active" data-side="FRONT">Frente</button>
+            <button type="button" class="side-tab" data-side="BACK">Verso</button>
+          </div>
+          <button id="deleteSelected">Excluir</button><button id="centerSelected">Centralizar</button><button id="bringFront">Trazer à frente</button>
+          <span>Arraste a arte pra mover. Clique nela pra selecionar: ⟳ no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica o tamanho.</span>
+        </div>
+        <div class="shirt-stage">
+          <img id="shirtPhoto" class="shirt-photo" alt="" style="display:none">
+          <svg id="shirtSvg" class="shirt-svg" viewBox="0 0 430 520" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="printArea">
+            <canvas id="designCanvas" width="420" height="480"></canvas>
+            <div id="shirtHandles" class="gang-handles" hidden>
+              <button type="button" id="shirtHandleRotate" class="gh-handle gh-rotate" title="Girar 90°">⟳</button>
+              <div id="shirtHandleResize" class="gh-handle gh-resize" title="Esticar"></div>
+            </div>
+            <div id="printAreaMove" class="print-area-move" title="Mover área de impressão">✥</div>
+            <div id="printAreaResize" class="mockup-box-resize" title="Redimensionar área de impressão"></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel shirt-only" id="addArtPanel">
+        <h2>Adicionar arte</h2>
+        <div class="tool"><label>Upload</label><input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp"></div>
+        <div class="tool"><label>Criar com IA</label><textarea id="aiPrompt" rows="4" placeholder="Descreva a estampa"></textarea><button id="generateAI">Gerar com IA</button><small id="aiStatus"></small></div>
+        <div class="tool"><label>Artes Ripfire</label><div id="catalogMini" class="catalog-mini"></div></div>
+        <hr>
+        <h2>Cliente</h2>
+        <div class="account-box">
+          <p id="accountInfoShirt" class="account-info">Você ainda não entrou com uma conta.</p>
+          <button type="button" id="openAuthShirt" class="full">Entrar / Cadastrar</button>
+          <button type="button" id="logoutBtnShirt" class="full" hidden>Sair da conta</button>
+        </div>
+        <button id="checkoutBtn" class="primary full">Criar pedido</button><div id="checkoutStatus"></div>
+      </aside>
+
+      <aside class="panel gang-only" id="gangAddPanel" style="display:none">
+        <h2>Adicionar imagem</h2>
+        <div class="tool">
+          <label>Upload</label>
+          <div id="gangDrop" class="gang-drop">
+            <input id="gangUpload" type="file" accept="image/png,image/jpeg,image/webp">
+            <div class="gang-drop-empty">
+              <span class="gang-drop-icon">⬆</span>
+              <span>Clique ou arraste uma imagem aqui<br><small>PNG, JPG ou WEBP</small></span>
+            </div>
+            <div class="gang-drop-preview">
+              <img id="gangDropImg" alt="">
+              <span id="gangDropName"></span>
+            </div>
+          </div>
+        </div>
+        <div class="tool"><label>Criar com IA</label><textarea id="gangAiPrompt" rows="3" placeholder="Descreva a estampa"></textarea><button type="button" id="gangGenerateAI">Gerar com IA</button><small id="gangAiStatus"></small></div>
+        <div class="tool"><label>Artes Ripfire</label><div id="gangCatalogMini" class="catalog-mini"></div></div>
+        <div class="dims-row">
+          <div><label>Largura (cm)</label><input id="gangWidthCm" type="number" min="1" step="0.5" placeholder="Ex: 15"></div>
+          <div><label>Altura (cm)</label><input id="gangHeightCm" type="number" min="1" step="0.5" placeholder="—" disabled></div>
+        </div>
+        <label>Quantidade</label><input id="gangQty" type="number" min="1" value="1">
+        <button id="gangAddBtn" class="primary full">Adicionar ao arquivo</button>
+        <div id="gangAddStatus"></div>
+      </aside>
+
+      <section class="workspace gang-only" id="gangWorkspace" style="display:none">
+        <div class="toolbar gang-toolbar">
+          <span id="gangAreaLabel">ÁREA DE IMPRESSÃO — 0CM × 0CM</span>
+          <div class="gang-piece-actions">
+            <button id="gangRotatePiece" disabled>⟳ Girar peça</button>
+            <button id="gangFlipHBtn" disabled>⇋ Inverter horizontal</button>
+            <button id="gangFlipVBtn" disabled>⇅ Inverter vertical</button>
+          </div>
+          <div class="gang-actions">
+            <button id="gangAuto">⇔ Automático</button>
+            <button id="gangReorganize">↻ Reorganizar</button>
+          </div>
+        </div>
+        <p class="gang-hint">Arraste uma peça pra mover. Clique nela pra selecionar: ⟳ no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica. Shift+clique seleciona todas as peças entre duas peças; Ctrl+clique soma/remove uma peça da seleção; arrastar num espaço vazio desenha um quadrante de seleção. Com várias selecionadas, arraste qualquer uma pra mover o grupo junto.</p>
+        <div class="gang-canvas-wrap">
+          <div class="gang-corner"></div>
+          <div id="gangRulerTop" class="gang-ruler-top"></div>
+          <div class="gang-scroll-row">
+            <div id="gangRulerLeft" class="gang-ruler-left"></div>
+            <div class="gang-scroll">
+              <canvas id="gangCanvas"></canvas>
+              <div id="gangHandles" class="gang-handles" hidden>
+                <button type="button" id="gangHandleRotate" class="gh-handle gh-rotate" title="Girar 90°">⟳</button>
+                <div id="gangHandleResize" class="gh-handle gh-resize" title="Esticar"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="gang-legend">
+          <span><i class="swatch normal"></i>Normal</span>
+          <span><i class="swatch rotated"></i>Rotacionada</span>
+          <span><i class="swatch selected"></i>Selecionada</span>
+          <span><i class="swatch collision"></i>Colisão</span>
+        </div>
+      </section>
+
+      <aside class="panel gang-only" id="gangClientPanel" style="display:none">
+        <h2>Cliente</h2>
+        <div class="account-box">
+          <p id="accountInfoGang" class="account-info">Você ainda não entrou com uma conta.</p>
+          <button type="button" id="openAuthGang" class="full">Entrar / Cadastrar</button>
+          <button type="button" id="logoutBtnGang" class="full" hidden>Sair da conta</button>
+        </div>
+        <button id="checkoutBtnGang" class="primary full">Criar pedido de teste</button><div id="checkoutStatusGang"></div>
+        <hr>
+        <h2>Imagens (<span id="gangCount">0</span>)</h2>
+        <div id="gangList" class="gang-list"></div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="digital" class="tab">
+    <div class="section-head"><div><div class="eyebrow">DOWNLOAD DIGITAL</div><h1>Artes Ripfire</h1></div></div>
+    <div id="digitalCatalog" class="catalog-grid"></div>
+  </section>
+
+  <section id="admin" class="tab">
+    <div class="admin-grid">
+      <div class="admin-col">
+      <section class="panel">
+        <h2>Cadastrar arte</h2>
+        <form id="artworkForm">
+          <label>Nome</label><input name="name" required>
+          <label>Categoria</label><input name="category" value="Streetwear">
+          <label>Preço digital</label><input name="digital_price" type="number" min="0" step="0.01" value="9.90">
+          <label class="check"><input name="can_customize" type="checkbox" checked> Usar no personalizador</label>
+          <label class="check"><input name="can_sell_digital" type="checkbox" checked> Vender arquivo digital</label>
+          <label>Arquivo</label><input name="artwork" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <button class="primary">Cadastrar</button>
+        </form><div id="adminArtStatus"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Foto de mockup da camiseta</h2>
+        <p style="font-size:12px;color:var(--muted);margin:-8px 0 12px">Suba uma foto real do produto (sem estampa) pra cada modelo/cor. Quando existir, o editor usa a foto no lugar do desenho.</p>
+        <form id="mockupForm">
+          <label>Modelo</label><select name="model_id" id="mockupModel"></select>
+          <label>Cor</label><select name="color" id="mockupColor"></select>
+          <label>Lado</label>
+          <select name="side" id="mockupSide">
+            <option value="FRONT">Frente</option>
+            <option value="BACK">Verso</option>
+          </select>
+          <label>Foto</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <div class="mockup-preview" id="mockupPreviewWrap" style="display:none">
+            <img id="mockupPreviewImg" alt="">
+            <div id="mockupPreviewBox">
+              <div id="mockupBoxResize" class="mockup-box-resize" title="Arraste para redimensionar"></div>
+            </div>
+          </div>
+          <small style="color:var(--muted)">Arraste o quadrado pra mover, ou o cantinho no canto inferior direito pra redimensionar.</small>
+          <div class="dims-row">
+            <div><label>Área X (%)</label><input name="print_x" id="mockupX" type="number" min="0" max="100" value="30" step="0.5"></div>
+            <div><label>Área Y (%)</label><input name="print_y" id="mockupY" type="number" min="0" max="100" value="28" step="0.5"></div>
+          </div>
+          <div class="dims-row">
+            <div><label>Largura (%)</label><input name="print_w" id="mockupW" type="number" min="1" max="100" value="40" step="0.5"></div>
+            <div><label>Altura (%)</label><input name="print_h" id="mockupH" type="number" min="1" max="100" value="45" step="0.5"></div>
+          </div>
+          <button class="primary full">Salvar mockup</button>
+        </form><div id="adminMockupStatus"></div>
+        <h2 style="margin-top:18px">Mockups cadastrados</h2>
+        <div id="mockupsList" class="gang-list"></div>
+      </section>
+      </div>
+      <section class="panel wide"><div class="section-head compact"><h2>Pedidos</h2><button id="refreshOrders">Atualizar</button></div><div id="ordersTable"></div></section>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-brand">RIPFIRE <span>STUDIO</span></div>
+  <p>Personalização sob demanda de camisetas e DTF's.</p>
+  <div class="footer-links">
+    <a href="https://wa.me/" target="_blank" rel="noopener">WhatsApp</a>
+    <a href="https://www.ripfire.com.br/" target="_blank" rel="noopener">ripfire.com.br</a>
+    <a href="https://www.ripfireclub.com.br/" target="_blank" rel="noopener">ripfireclub.com.br</a>
+  </div>
+  <small>&copy; Ripfire</small>
+</footer>
+
+<dialog id="authModal">
+  <form method="dialog" class="modal-card auth-card">
+    <button class="close" value="cancel">×</button>
+    <h2>Entrar ou criar conta</h2>
+    <div id="googleBtnContainer"></div>
+    <button type="button" id="googleBtnFallback" class="google-btn" disabled title="Login com Google não configurado" hidden>
+      <span class="google-g">G</span> Continuar com Google <small>(indisponível)</small>
+    </button>
+    <div class="auth-divider"><span>ou</span></div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-authtab="login">Entrar</button>
+      <button type="button" class="auth-tab" data-authtab="register">Cadastrar</button>
+    </div>
+    <div id="authLoginForm" class="auth-pane">
+      <input id="loginEmail" placeholder="E-mail" type="email" autocomplete="email">
+      <input id="loginPassword" placeholder="Senha" type="password" autocomplete="current-password">
+      <button type="button" id="loginSubmitBtn" class="primary full">Entrar</button>
+    </div>
+    <div id="authRegisterForm" class="auth-pane" hidden>
+      <input id="regName" placeholder="Nome completo" autocomplete="name">
+      <input id="regEmail" placeholder="E-mail" type="email" autocomplete="email">
+      <input id="regPassword" placeholder="Senha (mín. 6 caracteres)" type="password" autocomplete="new-password">
+      <input id="regPhone" placeholder="Telefone / WhatsApp (opcional)" autocomplete="tel" inputmode="numeric" maxlength="18">
+      <div class="dims-row">
+        <input id="regCep" placeholder="CEP (opcional)">
+        <input id="regNumber" placeholder="Número (opcional)">
+      </div>
+      <input id="regDocument" placeholder="CPF ou CNPJ (opcional)" inputmode="numeric" maxlength="18">
+      <button type="button" id="registerSubmitBtn" class="primary full">Criar conta</button>
+    </div>
+    <div id="authStatus"></div>
+  </form>
+</dialog>
+
+<dialog id="adminLoginModal">
+  <form method="dialog" class="modal-card auth-card">
+    <button class="close" value="cancel">×</button>
+    <h2>Entrar no Admin</h2>
+    <input id="adminUser" placeholder="Usuário" autocomplete="username">
+    <input id="adminPassword" placeholder="Senha" type="password" autocomplete="current-password">
+    <button type="button" id="adminLoginBtn" class="primary full">Entrar</button>
+    <div id="adminLoginStatus"></div>
+  </form>
+</dialog>
+
+<dialog id="digitalCheckout"><form method="dialog" class="modal-card"><button class="close" value="cancel">×</button><h2>Comprar arte digital</h2><div id="digitalSelected"></div>
+  <div id="accountBoxDigital" class="account-box">
+    <p id="accountInfoDigital" class="account-info">Você ainda não entrou com uma conta.</p>
+    <button type="button" id="openAuthDigital">Entrar / Cadastrar</button>
+  </div>
+  <button type="button" id="confirmDigital" class="primary full">Gerar pedido</button><div id="digitalStatus"></div></form></dialog>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="/static/app.js?v=14"></script>
+</body>
+</html>

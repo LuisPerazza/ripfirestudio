@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+config.json
+data/
+orders/*
+!orders/.gitkeep
+SomenteDTFs/
+media/artworks/*
+!media/artworks/.gitkeep
+media/generated/*
+!media/generated/.gitkeep
+media/mockups/*
+!media/mockups/.gitkeep
+PRODUCAO_PAGA/
+*.zip

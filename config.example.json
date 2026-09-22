@@ -1,0 +1,58 @@
+{
+  "store_name": "Ripfire Studio",
+  "max_print_width_cm": 58.5,
+  "max_print_height_cm": 50,
+  "dpi": 300,
+  "shirt_models": [
+    {
+      "id": "regular",
+      "name": "Regular",
+      "base_price": 24.9
+    },
+    {
+      "id": "oversized",
+      "name": "Oversize",
+      "base_price": 34.9
+    },
+    {
+      "id": "babylook",
+      "name": "Baby Look",
+      "base_price": 26.9
+    }
+  ],
+  "shirt_colors": [
+    "Preto",
+    "Branco",
+    "Off White",
+    "Marrom"
+  ],
+  "sizes": [
+    "P",
+    "M",
+    "G",
+    "GG",
+    "G1",
+    "G2",
+    "G3",
+    "G4"
+  ],
+  "pricing": {
+    "dtf_only_unit": 8.9,
+    "finished_press_unit": 7.0,
+    "digital_license_default": 9.9,
+    "dtf_gang_sheet_tiers": [
+      {"up_to_m": 1, "price_per_m": 49.9},
+      {"up_to_m": 3, "price_per_m": 44.9},
+      {"up_to_m": 999, "price_per_m": 39.9}
+    ]
+  },
+  "dtf_sheet_width_cm": 58.5,
+  "dtf_sheet_min_height_cm": 200,
+  "production_drop_folder": "./PRODUCAO_PAGA",
+  "payment": {
+    "mode": "test",
+    "webhook_secret": "TROQUE-ESTA-CHAVE"
+  },
+  "admin_key": "TROQUE-ESTA-CHAVE-ADMIN",
+  "admin_user": "TROQUE-ESTE-USUARIO"
+}
