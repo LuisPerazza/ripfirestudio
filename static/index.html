@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=39">
+  <link rel="stylesheet" href="/static/styles.css?v=40">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -384,16 +384,19 @@
 <footer class="site-footer">
   <div class="footer-brand">RIPFIRE <span>STUDIO</span></div>
   <p>Personalização sob demanda de camisetas e DTF's.</p>
-  <div class="footer-links">
+  <nav class="footer-links" aria-label="Contato e sites">
     <a href="https://wa.me/" target="_blank" rel="noopener">WhatsApp</a>
     <a href="https://www.ripfire.com.br/" target="_blank" rel="noopener">ripfire.com.br</a>
     <a href="https://www.ripfireclub.com.br/" target="_blank" rel="noopener">ripfireclub.com.br</a>
+  </nav>
+  <nav class="footer-legal" aria-label="Informações legais">
     <a href="/termos" target="_blank">Termos de Serviço</a>
     <a href="/privacidade" target="_blank">Política de Privacidade</a>
     <a href="/reembolso" target="_blank">Trocas e Reembolso</a>
-    <a href="/lgpd" target="_blank">Seus dados (LGPD)</a>
-    <a href="#" id="cookiePrefsLink">Preferências de cookies</a>
-  </div>
+    <!-- Desligados por enquanto: pra voltar, tire o hidden. -->
+    <a href="/lgpd" target="_blank" hidden>Seus dados (LGPD)</a>
+    <a href="#" id="cookiePrefsLink" hidden>Preferências de cookies</a>
+  </nav>
   <small>&copy; Ripfire</small>
 </footer>
 
