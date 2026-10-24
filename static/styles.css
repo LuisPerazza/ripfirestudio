@@ -487,3 +487,27 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .upload-tool .gang-drop-preview img{width:96px;height:96px;padding:6px;border-radius:12px;background:repeating-conic-gradient(#e2e2de 0 25%,#f2f2ef 0 50%) 0 0/12px 12px;border:1px solid #d6d6d1;box-shadow:0 4px 12px rgba(0,0,0,.08)}
 .upload-tool .gang-drop-preview span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;max-width:100%;overflow:hidden;white-space:normal;overflow-wrap:anywhere;font-size:12px;font-weight:700;color:var(--ink);line-height:1.35}
 .upload-tool .gang-drop-preview::after{content:'Clique ou arraste outra pra trocar';font-size:11px;color:var(--muted)}
+
+/* Lista "Imagens" da chapa: medida e quantidade de cada arte */
+.gl-item{background:#e5e5e1;border:1px solid #d3d3ce;border-radius:12px;padding:10px;display:grid;gap:10px}
+.gl-top{display:flex;align-items:center;gap:10px;min-width:0}
+.gl-top img{flex:none;width:48px;height:48px;object-fit:contain;padding:3px;border-radius:9px;border:1px solid #d6d6d1;background:repeating-conic-gradient(#e2e2de 0 25%,#f2f2ef 0 50%) 0 0/10px 10px}
+.gl-name{flex:1;min-width:0}
+.gl-name b{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gl-name small{display:block;margin-top:2px;font-size:11.5px;color:var(--muted)}
+#editor .gl-del{flex:none;width:32px;height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:#c0392b;font-size:15px;padding:0}
+#editor .gl-del:hover{background:#f6e3e1;border-color:#e8bdb8}
+.gl-controls{display:grid;gap:8px}
+.gl-size{display:flex;align-items:flex-end;gap:6px}
+.gl-size label{flex:1;margin:0;min-width:0}
+.gl-size label span{display:block;font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+#editor .gl-size input,#editor .gl-qty input{width:100%;height:34px;padding:0 6px;text-align:center;font-weight:700;font-size:13px;border:1px solid #cfcfca;border-radius:8px;background:#f4f4f1;margin:0}
+.gl-x,.gl-unit{flex:none;font-size:12px;color:var(--muted);padding-bottom:9px}
+.gl-qty{display:flex;align-items:center;gap:6px}
+.gl-qty>span{font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin-right:auto}
+#editor .gl-qty input{width:52px;flex:none}
+#editor .gl-qty button{flex:none;width:34px;height:34px;border:1px solid #cfcfca;border-radius:8px;background:#f4f4f1;font-size:17px;font-weight:700;line-height:1;padding:0;color:var(--ink)}
+#editor .gl-qty button:hover{border-color:var(--accent);color:var(--accent)}
+.gl-item input::-webkit-outer-spin-button,.gl-item input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.gl-item input[type=number]{-moz-appearance:textfield}
+.gl-empty{font-size:12px;color:var(--muted);margin:0}

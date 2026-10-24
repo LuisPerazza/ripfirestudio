@@ -2152,21 +2152,74 @@ function appendGangPieces(it){
   }
   recalcGangCanvasHeight();
 }
+/* Lista "Imagens": cada arte com a medida (largura × altura) e a quantidade.
+   A medida é a mesma da chapa: esticar uma peça na chapa muda a medida da arte
+   (e de todas as cópias dela), e mudar aqui muda as peças na chapa. */
+const r1=v=>Math.round(Number(v)*10)/10;
+const gangMaxW=()=>sheetWidthCm()-1.2; // largura do rolo menos a margem dos dois lados
+function pieceUnrotated(p){ const odd=(p.angle||0)%180===90; return odd?{w:p.hCm,h:p.wCm}:{w:p.wCm,h:p.hCm}; }
+function applyItemSizeToPieces(it,except){
+  gangPieces.filter(o=>o.itemId===it.id&&o!==except).forEach(o=>{
+    const odd=(o.angle||0)%180===90;
+    o.wCm=odd?it.hCm:it.wCm; o.hCm=odd?it.wCm:it.hCm;
+    clampGangPiece(o);
+  });
+}
+// Depois de esticar uma peça na chapa: a arte passa a ter essa medida.
+function syncGangItemFromPiece(p){
+  const it=p&&gangItems.find(x=>x.id===p.itemId);
+  if(!it) return;
+  const s=pieceUnrotated(p);
+  it.wCm=r1(s.w); it.hCm=r1(s.h);
+  applyItemSizeToPieces(it,p);
+  recalcGangCanvasHeight();
+  renderGangList();
+}
+function setGangItemSize(it,dim,value){
+  let v=Number(String(value).replace(',','.'));
+  if(!(v>0)) return renderGangList();
+  const ratio=it.hCm/it.wCm;
+  let w=dim==='w'?v:v/ratio;
+  w=Math.min(Math.max(w,1),gangMaxW());
+  it.wCm=r1(w); it.hCm=r1(w*ratio);
+  applyItemSizeToPieces(it,null);
+  renderGangList(); autoArrangeGang(true);
+}
+function setGangItemQty(it,qty){
+  it.qty=Math.max(1,Math.min(999,Math.floor(Number(qty))||1));
+  renderGangList(); autoArrangeGang(true);
+}
 function renderGangList(){
   $('#gangCount').textContent=gangItems.length;
   $('#gangList').innerHTML=gangItems.map(it=>`
-    <div class="gang-item" data-item="${it.id}">
-      <img src="${it.url}" alt="">
-      <div class="gi-info"><b>${esc(it.name)}</b><small>${it.wCm}×${it.hCm} cm</small></div>
-      <label style="margin:0"><small>Qtd</small><input type="number" min="1" value="${it.qty}" data-qty="${it.id}"></label>
-      <button data-del="${it.id}" title="Remover" aria-label="Remover ${esc(it.name)}">🗑</button>
+    <div class="gl-item" data-item="${it.id}">
+      <div class="gl-top">
+        <img src="${it.url}" alt="">
+        <div class="gl-name"><b title="${esc(it.name)}">${esc(it.name)}</b><small>${fmtCm(it.wCm)} × ${fmtCm(it.hCm)} cm · ${it.qty} ${it.qty===1?'peça':'peças'}</small></div>
+        <button type="button" class="gl-del" data-del="${it.id}" title="Remover" aria-label="Remover ${esc(it.name)}">🗑</button>
+      </div>
+      <div class="gl-controls">
+        <div class="gl-size">
+          <label><span>Largura</span><input type="number" min="1" step="0.5" value="${r1(it.wCm)}" data-gl-w="${it.id}" aria-label="Largura em cm de ${esc(it.name)}"></label>
+          <span class="gl-x" aria-hidden="true">×</span>
+          <label><span>Altura</span><input type="number" min="1" step="0.5" value="${r1(it.hCm)}" data-gl-h="${it.id}" aria-label="Altura em cm de ${esc(it.name)}"></label>
+          <span class="gl-unit">cm</span>
+        </div>
+        <div class="gl-qty" role="group" aria-label="Quantidade de ${esc(it.name)}">
+          <span>Qtd</span>
+          <button type="button" data-q="${it.id}:-1" aria-label="Menos uma">−</button>
+          <input type="number" min="1" value="${it.qty}" data-qty="${it.id}" aria-label="Quantidade">
+          <button type="button" data-q="${it.id}:1" aria-label="Mais uma">+</button>
+        </div>
+      </div>
     </div>
-  `).join('') || '<p style="font-size:12px;color:var(--muted)">Nenhuma imagem adicionada.</p>';
-  $$('[data-qty]').forEach(inp=>inp.onchange=()=>{
-    const it=gangItems.find(x=>x.id===inp.dataset.qty);
-    if(it){it.qty=Math.max(1,Math.floor(Number(inp.value))||1);inp.value=it.qty;autoArrangeGang(true);}
-  });
-  $$('[data-del]').forEach(b=>b.onclick=()=>{
+  `).join('') || '<p class="gl-empty">Nenhuma imagem adicionada.</p>';
+  const item=id=>gangItems.find(x=>x.id===id);
+  $$('#gangList [data-gl-w]').forEach(inp=>inp.onchange=()=>{const it=item(inp.dataset.glW); if(it) setGangItemSize(it,'w',inp.value)});
+  $$('#gangList [data-gl-h]').forEach(inp=>inp.onchange=()=>{const it=item(inp.dataset.glH); if(it) setGangItemSize(it,'h',inp.value)});
+  $$('#gangList [data-qty]').forEach(inp=>inp.onchange=()=>{const it=item(inp.dataset.qty); if(it) setGangItemQty(it,inp.value)});
+  $$('#gangList [data-q]').forEach(b=>b.onclick=()=>{const [id,d]=b.dataset.q.split(':'), it=item(id); if(it) setGangItemQty(it,it.qty+Number(d))});
+  $$('#gangList [data-del]').forEach(b=>b.onclick=()=>{
     gangItems=gangItems.filter(x=>x.id!==b.dataset.del);
     renderGangList(); autoArrangeGang(true);
   });
@@ -2394,6 +2447,7 @@ function endGangInteraction(){
   }
   if(gangResize){
     if(gangCanvas.hasPointerCapture(gangResize.pointerId)) gangCanvas.releasePointerCapture(gangResize.pointerId);
+    syncGangItemFromPiece(gangResize.piece);
     recalcGangCanvasHeight();
     renderGangCanvas();
     updatePrice();
@@ -2433,6 +2487,7 @@ gangCanvas.onkeydown=ev=>{
   else if(k==='+'||k==='='||k==='-'||k==='_'){
     const f=(k==='-'||k==='_')?(ev.shiftKey?0.8:0.95):(ev.shiftKey?1.2:1.05);
     p.wCm=Math.max(1,Math.min(p.wCm*f,sheetWidthCm())); p.hCm=Math.max(1,p.hCm*f); clampGangPiece(p);
+    syncGangItemFromPiece(p);
   }
   else if(k==='r'||k==='R') rotateGangPiece(p);
   else if(k==='h'||k==='H') p.flipX=!p.flipX;
@@ -2454,6 +2509,7 @@ $('#gangHandleResize').onkeydown=ev=>{
   ev.preventDefault();
   const p=gangSelected, s=ev.shiftKey?5:0.5;
   p.wCm=Math.max(1,Math.min(p.wCm+d[0]*s,sheetWidthCm()-p.xCm)); p.hCm=Math.max(1,p.hCm+d[1]*s);
+  syncGangItemFromPiece(p);
   recalcGangCanvasHeight(); renderGangCanvas(); updatePrice(); announce(describeGang());
 };
 $('#gangHandleResize').onpointerdown=ev=>{
