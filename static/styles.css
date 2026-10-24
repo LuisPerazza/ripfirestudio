@@ -460,3 +460,15 @@ dialog.art-picker{width:min(860px,94vw);height:min(720px,90vh);background:#0f0f1
 @media(max-width:600px){.site-footer .footer-links{gap:8px 18px}.footer-legal{gap:8px 16px}}
 body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-digital .site-footer{background:linear-gradient(to top,rgba(5,5,5,.9),rgba(5,5,5,.65) 70%,rgba(5,5,5,0))}
 .site-footer p{color:#e4e4e4}
+
+/* Chapa do DTF: o quadriculado fica na própria chapa e acompanha a metragem
+   (antes era o fundo da caixa de rolagem e parava em ~117 cm). */
+.gang-scroll{align-self:flex-start;background:none}
+#gangCanvas{background:repeating-conic-gradient(#d9d9d5 0 25%,#e7e7e3 0 50%) 0 0/16px 16px}
+
+/* Fundos claros ~15% mais cinza (Personalizar e Minha conta): menos brilho na tela. */
+#editor .panel,#editor .workspace,#profile .ppanel,#profile .profile-tabs{background:#dcdcd8;border-color:#cbcbc6}
+#editor .tool:not(.rf-arts),#editor .account-box,#editor .gang-canvas-wrap,#editor .gang-ruler-top,#editor .gang-ruler-left,#editor .gang-corner,#editor .shirt-stage,#editor .gang-item{background:#e5e5e1}
+#editor input,#editor select,#editor textarea,#editor .upload-tool .gang-drop,#editor .gang-drop,#editor .model-tab:not(.active),#editor .side-tab:not(.active),#editor .account-box button,#editor .toolbar button:not(.active),#editor .gang-piece-actions button,#editor .gang-actions button,#editor .gang-item img,
+#profile input,#profile select,#profile textarea,#profile .btn-line,#profile .p-dl,#profile .p-dl-body button,#profile .o-pos{background:#efefec}
+#editor .upload-tool .gang-drop:hover,#editor .upload-tool .gang-drop.drag{background:#f3edf6}
