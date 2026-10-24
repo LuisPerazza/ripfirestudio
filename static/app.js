@@ -1528,7 +1528,7 @@ function renderLibraryPremium(){
   const box=$('#libraryPremium'), n=premiumNotice;
   box.innerHTML=hasPremium()
     ? `<div><b>★ Premium ativo até ${fmtDate(currentCustomer.premium_until)}</b><br>Baixe e use todas as artes premium.</div>`
-    : `<div><b>★ Premium</b> · baixe e use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> a cada ${CONFIG.premium_days||30} dias.
+    : `<div><b>★ Premium</b> · Use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> por mês.
         ${n?`<div class="${n.ok?'success':'error'}">${esc(n.msg)}</div>`:''}</div>
        <button type="button" class="btn-grad" id="subscribePremium">Assinar premium</button>`;
   const b=$('#subscribePremium'); if(b) b.onclick=subscribePremium;
@@ -1612,7 +1612,7 @@ function renderArtPicker(){
   const prem=$('#apPremium'), locked=apView.side==='premium'&&!hasPremium();
   prem.hidden=!locked;
   if(locked){
-    prem.innerHTML=`<span><b>★ Premium</b> · use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> a cada ${CONFIG.premium_days||30} dias.</span>
+    prem.innerHTML=`<span><b>★ Premium</b> · Use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> por mês.</span>
       <button type="button" class="btn-grad" data-ap-sub>Assinar</button>`;
     prem.querySelector('[data-ap-sub]').onclick=()=>{$('#artPickerModal').close();tab('digital');subscribePremium()};
   }
@@ -1872,7 +1872,7 @@ function renderProfilePremium(){
       <p class="small">Renovando antes de vencer, os dias novos somam aos que faltam.</p>${notice}`;
   }else{
     box.innerHTML=`<span class="pchip premium">★ PREMIUM</span>
-      <h2>Libere todas as artes</h2><p>Baixe e use todas as artes premium por ${price} a cada ${days} dias.</p>
+      <h2>Libere todas as artes</h2><p>Use todas as artes premium por ${price} por mês.</p>
       <button type="button" id="profileRenew" class="btn-grad full">Assinar premium · ${price}</button>
       <button type="button" class="btn-line full on-dark" data-go-digital>Ver artes premium</button>${notice}`;
   }
