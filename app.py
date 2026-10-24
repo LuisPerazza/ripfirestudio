@@ -1241,12 +1241,50 @@ def restore_database(source: Path):
     print(f"Restaurado: {source.name} → {DB_PATH}. Pode ligar o servidor de novo.")
 
 
+def seed_default_mockups():
+    """Fotos 3D das camisetas (mockups_padrao/, com as áreas de impressão já
+    ajustadas). Entram sozinhas quando o site não tem nenhum mockup: banco
+    novo no Supabase, PC novo. Depois disso o Admin troca à vontade."""
+    manifest = BASE / "mockups_padrao" / "mockups.json"
+    if not manifest.is_file():
+        return
+    with db() as con:
+        if con.execute("SELECT COUNT(*) FROM shirt_mockups").fetchone()[0]:
+            return
+    added = 0
+    for i, m in enumerate(json.loads(manifest.read_text(encoding="utf-8"))):
+        src = BASE / "mockups_padrao" / m["file"]
+        if not src.is_file():
+            continue
+        dest = MOCKUPS_DIR / f"padrao_{m['file']}"
+        shutil.copyfile(src, dest)
+        try:
+            cloud_put(dest)
+        except cloud_storage.StorageError as exc:
+            print(f"[mockups] {m['file']} não subiu pro Storage: {exc}")
+            continue
+        with db() as con:
+            # id fixo + ON CONFLICT: dois processos subindo juntos não duplicam.
+            added += con.execute(
+                """INSERT INTO shirt_mockups
+                   (id,created_at,model_id,color,side,file_path,preview_url,print_x,print_y,print_w,print_h)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
+                (f"padrao_{Path(m['file']).stem}", time.time() + i / 1000, m["model_id"], m["color"], m["side"],
+                 str(dest), f"/media/mockups/{dest.name}", m["print_x"], m["print_y"], m["print_w"], m["print_h"])
+            ).rowcount
+    print(f"[mockups] {added} fotos padrão carregadas")
+
+
 init_db()
 if STORE:
     try:
         STORE.ensure_bucket()
     except cloud_storage.StorageError as exc:
         print(f"[storage] AVISO: não consegui conferir o bucket do Supabase: {exc}")
+try:
+    seed_default_mockups()
+except Exception as exc:  # sem mockup o site ainda funciona (desenho da camiseta)
+    print(f"[mockups] falhou ao carregar as fotos padrão: {exc}")
 
 # Modalidades desligadas temporariamente (a opção também está comentada no
 # index.html). Para reativar uma, basta tirar daqui.

@@ -1,0 +1,322 @@
+[
+ {
+  "file": "babylook_branco_costas.png",
+  "model_id": "babylook",
+  "color": "Branco",
+  "side": "BACK",
+  "print_x": 31.77,
+  "print_y": 13.45,
+  "print_w": 37.66,
+  "print_h": 77.75
+ },
+ {
+  "file": "babylook_branco_frente.png",
+  "model_id": "babylook",
+  "color": "Branco",
+  "side": "FRONT",
+  "print_x": 33.06,
+  "print_y": 13.3,
+  "print_w": 38.18,
+  "print_h": 77.89
+ },
+ {
+  "file": "babylook_marrom_costas.png",
+  "model_id": "babylook",
+  "color": "Marrom",
+  "side": "BACK",
+  "print_x": 31.95,
+  "print_y": 13.44,
+  "print_w": 37.46,
+  "print_h": 77.61
+ },
+ {
+  "file": "babylook_marrom_frente.png",
+  "model_id": "babylook",
+  "color": "Marrom",
+  "side": "FRONT",
+  "print_x": 33.19,
+  "print_y": 13.44,
+  "print_w": 37.85,
+  "print_h": 77.61
+ },
+ {
+  "file": "babylook_offwhite_costas.png",
+  "model_id": "babylook",
+  "color": "Off White",
+  "side": "BACK",
+  "print_x": 31.88,
+  "print_y": 13.31,
+  "print_w": 37.51,
+  "print_h": 77.95
+ },
+ {
+  "file": "babylook_offwhite_frente.png",
+  "model_id": "babylook",
+  "color": "Off White",
+  "side": "FRONT",
+  "print_x": 33.13,
+  "print_y": 13.09,
+  "print_w": 38.13,
+  "print_h": 78.16
+ },
+ {
+  "file": "babylook_preto_costas.png",
+  "model_id": "babylook",
+  "color": "Preto",
+  "side": "BACK",
+  "print_x": 35.78,
+  "print_y": 11.04,
+  "print_w": 29.83,
+  "print_h": 80.23
+ },
+ {
+  "file": "babylook_preto_frente.png",
+  "model_id": "babylook",
+  "color": "Preto",
+  "side": "FRONT",
+  "print_x": 36.41,
+  "print_y": 20.73,
+  "print_w": 30.04,
+  "print_h": 69.4
+ },
+ {
+  "file": "infantil_branco_costas.png",
+  "model_id": "infantil",
+  "color": "Branco",
+  "side": "BACK",
+  "print_x": 33.56,
+  "print_y": 26.54,
+  "print_w": 33.44,
+  "print_h": 57.54
+ },
+ {
+  "file": "infantil_branco_frente.png",
+  "model_id": "infantil",
+  "color": "Branco",
+  "side": "FRONT",
+  "print_x": 33.96,
+  "print_y": 22.64,
+  "print_w": 33.92,
+  "print_h": 64.1
+ },
+ {
+  "file": "infantil_marrom_costas.png",
+  "model_id": "infantil",
+  "color": "Marrom",
+  "side": "BACK",
+  "print_x": 33.49,
+  "print_y": 26.24,
+  "print_w": 33.49,
+  "print_h": 57.75
+ },
+ {
+  "file": "infantil_marrom_frente.png",
+  "model_id": "infantil",
+  "color": "Marrom",
+  "side": "FRONT",
+  "print_x": 33.96,
+  "print_y": 22.36,
+  "print_w": 33.92,
+  "print_h": 64.51
+ },
+ {
+  "file": "infantil_offwhite_costas.png",
+  "model_id": "infantil",
+  "color": "Off White",
+  "side": "BACK",
+  "print_x": 33.44,
+  "print_y": 25.95,
+  "print_w": 33.59,
+  "print_h": 58.02
+ },
+ {
+  "file": "infantil_offwhite_frente.png",
+  "model_id": "infantil",
+  "color": "Off White",
+  "side": "FRONT",
+  "print_x": 33.96,
+  "print_y": 22.64,
+  "print_w": 33.92,
+  "print_h": 64.17
+ },
+ {
+  "file": "infantil_preto_costas.png",
+  "model_id": "infantil",
+  "color": "Preto",
+  "side": "BACK",
+  "print_x": 33.48,
+  "print_y": 26.38,
+  "print_w": 33.45,
+  "print_h": 57.57
+ },
+ {
+  "file": "infantil_preto_frente.png",
+  "model_id": "infantil",
+  "color": "Preto",
+  "side": "FRONT",
+  "print_x": 33.94,
+  "print_y": 22.29,
+  "print_w": 33.89,
+  "print_h": 64.51
+ },
+ {
+  "file": "oversized_branco_costas.png",
+  "model_id": "oversized",
+  "color": "Branco",
+  "side": "BACK",
+  "print_x": 33.72,
+  "print_y": 19.45,
+  "print_w": 34.64,
+  "print_h": 69.83
+ },
+ {
+  "file": "oversized_branco_frente.png",
+  "model_id": "oversized",
+  "color": "Branco",
+  "side": "FRONT",
+  "print_x": 33.78,
+  "print_y": 22.63,
+  "print_w": 34.59,
+  "print_h": 67.31
+ },
+ {
+  "file": "oversized_marrom_costas.png",
+  "model_id": "oversized",
+  "color": "Marrom",
+  "side": "BACK",
+  "print_x": 33.97,
+  "print_y": 19.49,
+  "print_w": 35.17,
+  "print_h": 69.35
+ },
+ {
+  "file": "oversized_marrom_frente.png",
+  "model_id": "oversized",
+  "color": "Marrom",
+  "side": "FRONT",
+  "print_x": 33.27,
+  "print_y": 19.27,
+  "print_w": 35.22,
+  "print_h": 70.45
+ },
+ {
+  "file": "oversized_offwhite_costas.png",
+  "model_id": "oversized",
+  "color": "Off White",
+  "side": "BACK",
+  "print_x": 33.99,
+  "print_y": 18.5,
+  "print_w": 34.98,
+  "print_h": 70.65
+ },
+ {
+  "file": "oversized_offwhite_frente.png",
+  "model_id": "oversized",
+  "color": "Off White",
+  "side": "FRONT",
+  "print_x": 34.94,
+  "print_y": 23.62,
+  "print_w": 34.02,
+  "print_h": 65.94
+ },
+ {
+  "file": "oversized_preto_costas.png",
+  "model_id": "oversized",
+  "color": "Preto",
+  "side": "BACK",
+  "print_x": 35.26,
+  "print_y": 13.16,
+  "print_w": 32.84,
+  "print_h": 72.9
+ },
+ {
+  "file": "oversized_preto_frente.png",
+  "model_id": "oversized",
+  "color": "Preto",
+  "side": "FRONT",
+  "print_x": 35.5,
+  "print_y": 20.0,
+  "print_w": 32.26,
+  "print_h": 69.3
+ },
+ {
+  "file": "regular_branco_costas.png",
+  "model_id": "regular",
+  "color": "Branco",
+  "side": "BACK",
+  "print_x": 34.59,
+  "print_y": 19.61,
+  "print_w": 31.05,
+  "print_h": 69.76
+ },
+ {
+  "file": "regular_branco_frente.png",
+  "model_id": "regular",
+  "color": "Branco",
+  "side": "FRONT",
+  "print_x": 35.09,
+  "print_y": 21.01,
+  "print_w": 30.62,
+  "print_h": 67.85
+ },
+ {
+  "file": "regular_marrom_costas.png",
+  "model_id": "regular",
+  "color": "Marrom",
+  "side": "BACK",
+  "print_x": 34.53,
+  "print_y": 19.47,
+  "print_w": 31.1,
+  "print_h": 69.97
+ },
+ {
+  "file": "regular_marrom_frente.png",
+  "model_id": "regular",
+  "color": "Marrom",
+  "side": "FRONT",
+  "print_x": 34.9,
+  "print_y": 21.1,
+  "print_w": 30.77,
+  "print_h": 67.17
+ },
+ {
+  "file": "regular_offwhite_costas.png",
+  "model_id": "regular",
+  "color": "Off White",
+  "side": "BACK",
+  "print_x": 34.47,
+  "print_y": 21.02,
+  "print_w": 31.14,
+  "print_h": 73.11
+ },
+ {
+  "file": "regular_offwhite_frente.png",
+  "model_id": "regular",
+  "color": "Off White",
+  "side": "FRONT",
+  "print_x": 34.93,
+  "print_y": 20.67,
+  "print_w": 30.62,
+  "print_h": 67.65
+ },
+ {
+  "file": "regular_preto_costas.png",
+  "model_id": "regular",
+  "color": "Preto",
+  "side": "BACK",
+  "print_x": 33.38,
+  "print_y": 16.84,
+  "print_w": 33.43,
+  "print_h": 71.91
+ },
+ {
+  "file": "regular_preto_frente.png",
+  "model_id": "regular",
+  "color": "Preto",
+  "side": "FRONT",
+  "print_x": 34.21,
+  "print_y": 20.71,
+  "print_w": 31.77,
+  "print_h": 67.42
+ }
+]
