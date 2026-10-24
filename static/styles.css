@@ -511,3 +511,9 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .gl-item input::-webkit-outer-spin-button,.gl-item input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .gl-item input[type=number]{-moz-appearance:textfield}
 .gl-empty{font-size:12px;color:var(--muted);margin:0}
+
+/* Logo do topo: botão que volta ao Início */
+.home-logo{border:0;background:transparent;padding:4px 6px;margin:-4px -6px;border-radius:12px;cursor:pointer;transition:transform .15s,background .15s}
+.home-logo:hover{transform:translateY(-1px);background:rgba(255,255,255,.06)}
+.home-logo:active{transform:translateY(0) scale(.98)}
+.home-logo:focus-visible{outline:2px solid var(--accent);outline-offset:3px}

@@ -379,7 +379,7 @@ function fillConfig(){
 // "Criar com IA" fora do site por enquanto. Pra voltar: true (e OPENAI_API_KEY no servidor).
 const AI_UI_ENABLED=false;
 function bind(){
-  $$('.nav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));$('#startCustomize').onclick=()=>tab('editor');
+  $$('.nav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));$('#homeLogo').onclick=()=>{tab('home');window.scrollTo({top:0,behavior:'smooth'})};$('#startCustomize').onclick=()=>tab('editor');
   $('#openAuthShirt').onclick=openAuthModal;$('#openAuthGang').onclick=openAuthModal;
   $('#navAccount').onclick=()=>currentCustomer?tab('profile'):openAuthModal();
   $('#logoutBtnShirt').onclick=logoutCustomer;$('#logoutBtnGang').onclick=logoutCustomer;
