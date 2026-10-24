@@ -84,6 +84,8 @@ const customerInitial=()=>(currentCustomer?.full_name||currentCustomer?.email||'
 function countPage(page){
   try{ fetch('/api/metrics/hit',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({page})}).catch(()=>{}); }catch{}
 }
+// Uma visita por aba aberta (o sessionStorage some quando fecha a aba; nada vai pro servidor além do +1).
+try{ if(!sessionStorage.getItem('rf_visit')){ sessionStorage.setItem('rf_visit','1'); countPage('visit'); } }catch{}
 
 /* ============ Cookies e consentimento ============ */
 // Necessário (sempre ligado, não pede aceite): o login salvo no localStorage.
@@ -391,8 +393,8 @@ function bind(){
   $('#pfDeleteToggle').onclick=()=>{$('#pfDeleteForm').hidden=!$('#pfDeleteForm').hidden};
   $('#pfDeleteSave').onclick=deleteMyAccount;
   $('#refreshLgpd').onclick=loadLgpdRequests;
+  bindAdmin();
   $('#backupNow').onclick=backupNow;
-  $('#metricsDays').onchange=loadMetrics;
   bindMaskedInput($('#pfPhone'),formatPhoneBR);bindMaskedInput($('#pfDocument'),formatCpfCnpj);
   $('#pfCep').addEventListener('input',e=>{e.target.value=formatCep(e.target.value)});
   $$('.auth-tab').forEach(b=>b.onclick=()=>switchAuthTab(b.dataset.authtab));
@@ -432,7 +434,7 @@ function bind(){
     clampResizeToCanvas(selected); clampDragToCanvas(selected); render(); announce(describeSelected());
   };
   canvas.onpointerdown=pointerDown;canvas.onpointermove=pointerMove;window.onpointerup=()=>{dragging=null;if(shirtResize){canvas.hasPointerCapture(shirtResize.pointerId)&&canvas.releasePointerCapture(shirtResize.pointerId);shirtResize=null}};
-  $('#checkoutBtn').onclick=createOrder;$('#artworkForm').onsubmit=uploadArtwork;$('#refreshOrders').onclick=enterAdmin;
+  $('#checkoutBtn').onclick=createOrder;$('#refreshOrders').onclick=enterAdmin;
   $('#gangUpload').onchange=onGangUpload;$('#gangAddBtn').onclick=addGangImage;$('#gangAuto').onclick=()=>autoArrangeGang(true);$('#gangReorganize').onclick=()=>autoArrangeGang(true);
   $('#gangGenerateAI').onclick=generateGangAI;
   const gangDropEl=$('#gangDrop');
@@ -913,21 +915,6 @@ async function uploadMockup(ev){
   renderMockupsList();
   updateShirtVisual();
 }
-function renderMockupsList(){
-  $('#mockupsList').innerHTML=shirtMockups.map(m=>`
-    <div class="gang-item">
-      <img src="${m.preview_url}" alt="">
-      <div class="gi-info"><b>${esc(m.model_id)} · ${esc(m.color)} · ${m.side==='BACK'?'Costas':'Frente'}</b><small>área ${Number(m.print_w).toFixed(1)}×${Number(m.print_h).toFixed(1)}%</small></div>
-      <button data-delmock="${m.id}" title="Remover" aria-label="Remover mockup">🗑</button>
-    </div>
-  `).join('') || '<p style="font-size:12px;color:var(--muted)">Nenhum mockup cadastrado — o editor usa o desenho padrão.</p>';
-  $$('[data-delmock]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('Remover este mockup?')) return;
-    const r=await fetch(`/api/admin/shirt-mockups/${b.dataset.delmock}`,{method:'DELETE',headers:adminHeaders()});
-    if(r.status===401){clearAdmin();return}
-    await loadShirtMockups(); renderMockupsList(); updateShirtVisual();
-  });
-}
 async function loadArtworks(){
   // Falhou? Fica sem o catálogo, mas o resto do site abre (antes derrubava o init).
   try{ const r=await fetch('/api/artworks'); artworks=r.ok?await r.json().catch(()=>({})):[]; }catch{ artworks=[]; }
@@ -1332,93 +1319,10 @@ async function submitAdminLogin(){
   syncAdminUi();
   stat('#adminLoginStatus','Login realizado!',true);
   setTimeout(()=>$('#adminLoginModal').close(),400);
-  await loadOrders(); loadLgpdRequests(); loadMetrics(); loadBackups();
-}
-async function enterAdmin(){
-  if(!adminKey){ openAdminLogin(); return; }
-  await loadOrders(); loadLgpdRequests(); loadMetrics(); loadBackups();
+  enterAdmin();
 }
 // Resposta de erro sem JSON (ex.: o nginx barra arquivo grande com um 413 em HTML).
 const uploadError=(r,d)=>d.detail||(r.status===413?'Arquivo grande demais para enviar.':`Erro ${r.status}.`);
-async function uploadArtwork(ev){
-  ev.preventDefault();
-  if(!adminKey) return stat('#adminArtStatus','Entre no Admin com a chave primeiro.',false);
-  const form=ev.currentTarget; // depois do primeiro await, ev.currentTarget vira null
-  const fd=new FormData(form);
-  fd.set('can_customize',form.can_customize.checked?'true':'false');
-  fd.set('can_sell_digital',form.can_sell_digital.checked?'true':'false');
-  try{
-    const r=await fetch('/api/admin/artworks',{method:'POST',headers:adminHeaders(),body:fd});
-    const d=await r.json().catch(()=>({}));
-    if(r.status===401){ clearAdmin(); return stat('#adminArtStatus','Chave de admin inválida.',false); }
-    if(!r.ok) return stat('#adminArtStatus',uploadError(r,d),false);
-    stat('#adminArtStatus','Arte cadastrada.',true);
-    form.reset();
-    await loadArtworks();
-  }catch{ stat('#adminArtStatus','Sem conexão com o servidor.',false); }
-}
-async function loadOrders(){
-    const r=await fetch("/api/orders",{headers:adminHeaders()});
-    if(r.status===401){clearAdmin();$("#ordersTable").innerHTML="<p>Chave de admin inválida.</p>";return}
-    const orders=await r.json().catch(()=>({}));
-    if(!r.ok||!Array.isArray(orders)){$("#ordersTable").innerHTML=`<p>${esc(orders.detail||"Erro ao carregar pedidos.")}</p>`;return}
-    $("#ordersTable").innerHTML=orders.length?`
-      <table class="orders-table">
-        <thead><tr>
-          <th>Pedido</th><th>Cliente</th><th>Tipo</th><th>Total</th>
-          <th>Pagamento</th><th>Status</th><th>Arquivos</th><th>Ação</th>
-        </tr></thead>
-        <tbody>${orders.map(o=>`<tr>
-          <td><b>${o.order_number}</b></td>
-          <td>${esc(o.customer_name)}</td>
-          <td>${o.sale_type}</td>
-          <td>${money(o.total)}</td>
-          <td><span class="badge">${o.payment_status}</span></td>
-          <td><span class="badge">${o.status}</span></td>
-          <td>${o.sale_type==="PREMIUM_SUB" ? "-"
-            : `<button data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes, fotos de posição e dados do pedido num .zip">BAIXAR ZIP</button>`}
-            ${o.production_drop_path?`<br><small>${esc(o.production_drop_path)}</small>`:""}</td>
-          <td>${o.payment_status!=="PAID"
-            ? `<button data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Para pagamento recebido fora do site (Pix direto, dinheiro...)">MARCAR COMO PAGO</button>`
-            : o.sale_type==="PREMIUM_SUB" ? "Premium liberado"
-            : o.status==="PRONTO" ? "Pronto ✓"
-            : `<button data-ready="${o.id}" title="O cliente vê o pedido como pronto em Minha conta">MARCAR PRONTO</button>`}</td>
-        </tr>`).join("")}</tbody>
-      </table>`:"<p>Nenhum pedido.</p>";
-
-    $$("[data-pay]").forEach(b=>b.addEventListener("click",async()=>{
-      // Libera a produção: com pagamento real no site, um clique errado sai caro.
-      if(!confirm(`Marcar o pedido ${b.dataset.num} como pago? Use só se o pagamento foi recebido fora do site.`))return;
-      const r=await fetch(`/api/orders/${b.dataset.pay}/mark-paid`,{method:"POST",headers:adminHeaders()});
-      const d=await r.json().catch(()=>({}));
-      if(r.status===401){clearAdmin();alert("Chave de admin inválida.");return;}
-      if(!r.ok){alert(d.detail||"Erro ao liberar pedido");return;}
-      loadOrders();
-    }));
-    // Com o site num servidor, é assim que as artes do pedido chegam no PC do RIP.
-    $$("[data-files]").forEach(b=>b.addEventListener("click",async()=>{
-      b.disabled=true;
-      try{
-        const r=await fetch(`/api/admin/orders/${b.dataset.files}/files`,{headers:adminHeaders()});
-        if(r.status===401){clearAdmin();alert("Chave de admin inválida.");return;}
-        if(!r.ok){const d=await r.json().catch(()=>({}));alert(d.detail||"Erro ao baixar os arquivos do pedido");return;}
-        const a=document.createElement("a");
-        a.href=URL.createObjectURL(await r.blob());
-        a.download=`pedido_${b.dataset.name}.zip`;
-        a.click();
-        setTimeout(()=>URL.revokeObjectURL(a.href),10000);
-      }catch(e){alert("Não foi possível baixar: "+e.message);}
-      finally{b.disabled=false;}
-    }));
-    $$("[data-ready]").forEach(b=>b.addEventListener("click",async()=>{
-      const r=await fetch(`/api/orders/${b.dataset.ready}/mark-ready`,{method:"POST",headers:adminHeaders()});
-      const d=await r.json().catch(()=>({}));
-      if(r.status===401){clearAdmin();alert("Chave de admin inválida.");return;}
-      if(!r.ok){alert(d.detail||"Erro ao marcar o pedido como pronto");return;}
-      loadOrders();
-    }));
-  }
-
 /* ============ Biblioteca de artes digitais (hospedada no site) ============ */
 // Dois lados fixos (Grátis e Premium, ids 'free' e 'premium') -> pastas -> artes.
 // A pasta tem o acesso do lado; quem tem premium baixa e usa as premium.
@@ -1673,53 +1577,6 @@ async function libAdminFetch(url,opts={}){
   if(!r.ok) throw new Error(d.detail||'Erro');
   return d;
 }
-function renderLibraryAdmin(){
-  const byName=list=>list.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR',{numeric:true}));
-  const keep=(sel,html)=>{const old=$(sel).value;$(sel).innerHTML=html;if([...$(sel).options].some(o=>o.value===old))$(sel).value=old};
-  keep('#libTarget',LIB_SIDES.map(id=>byName(libSubs(id)).map(x=>`<option value="${x.id}">${ACCESS_LABEL[id]} → ${esc(x.name)}</option>`).join('')).join('')
-    ||'<option value="">Crie uma pasta primeiro</option>');
-  const row=c=>`<div class="lib-tree-row sub"><div><b>${esc(c.name)}</b><small>${plural(c.art_count||0,'arte','artes')}</small></div>
-    <div class="lib-tree-actions"><button type="button" data-lib-rename="${c.id}">Renomear</button>
-      <button type="button" data-lib-move="${c.id}">Mover para ${c.access==='premium'?'Grátis':'Premium'}</button>
-      <button type="button" data-lib-remove="${c.id}">Excluir</button></div></div>`;
-  $('#libTree').innerHTML=LIB_SIDES.filter(libCat).map(id=>`<div class="lib-tree-row"><div><b>${esc(libCat(id).name)}</b>
-      <small>Lado fixo · ${plural(libSubs(id).length,'pasta','pastas')} · ${plural(libTotal(id),'arte','artes')}</small></div></div>`
-    +byName(libSubs(id)).map(row).join('')).join('')
-    ||'<p style="font-size:12px;color:var(--muted)">Reinicie o servidor para criar os lados Grátis e Premium.</p>';
-  const act=async fn=>{try{await fn();await loadLibrary()}catch(e){alert(e.message)}};
-  const patch=(id,body)=>libAdminFetch(`/api/admin/library/categories/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  $$('#libTree [data-lib-rename]').forEach(b=>b.onclick=()=>{const c=libCat(b.dataset.libRename), name=prompt('Novo nome da pasta:',c.name);
-    if(name&&name.trim()) act(()=>patch(c.id,{name}))});
-  $$('#libTree [data-lib-move]').forEach(b=>b.onclick=()=>{const c=libCat(b.dataset.libMove), to=c.access==='premium'?'free':'premium';
-    if(confirm(`Mover "${c.name}" para ${ACCESS_LABEL[to]}? ${c.art_count?`As ${plural(c.art_count,'arte','artes')} dela passam a ser ${to==='premium'?'premium':'grátis'}.`:''}`))
-      act(()=>patch(c.id,{parent_id:to}))});
-  $$('#libTree [data-lib-remove]').forEach(b=>b.onclick=()=>{const c=libCat(b.dataset.libRemove);
-    if(confirm(`Excluir a pasta "${c.name}" e ${plural(c.art_count||0,'arte','artes')}? Os arquivos são apagados e não dá para desfazer.`))
-      act(()=>libAdminFetch(`/api/admin/library/categories/${c.id}`,{method:'DELETE'}))});
-}
-async function createLibraryCategory(ev){
-  ev.preventDefault();
-  try{
-    await libAdminFetch('/api/admin/library/categories',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:$('#libCatName').value,parent_id:$('#libParent').value})});
-    $('#libCatName').value=''; stat('#libCatStatus','Pasta criada!',true); await loadLibrary();
-  }catch(e){ stat('#libCatStatus',e.message,false); }
-}
-async function uploadLibraryArts(ev){
-  ev.preventDefault();
-  const files=[...$('#libFiles').files], target=$('#libTarget').value;
-  if(!target) return stat('#libUploadStatus','Crie uma pasta primeiro.',false);
-  if(!files.length) return stat('#libUploadStatus','Escolha as artes.',false);
-  const fd=new FormData(); fd.append('category_id',target); files.forEach(f=>fd.append('files',f));
-  const btn=$('#libUploadBtn'); btn.disabled=true;
-  stat('#libUploadStatus',`Enviando ${files.length} ${files.length===1?'arte':'artes'}...`,true);
-  try{
-    const d=await libAdminFetch('/api/admin/library/arts',{method:'POST',body:fd});
-    stat('#libUploadStatus',`${d.saved} ${d.saved===1?'arte enviada':'artes enviadas'}${d.skipped.length?`. Ignorados (não são imagem): ${d.skipped.join(', ')}`:''}.`,true);
-    $('#libFiles').value=''; await loadLibrary();
-  }catch(e){ stat('#libUploadStatus',e.message,false); }
-  finally{ btn.disabled=false; }
-}
 async function deleteLibraryArt(id){
   if(!confirm(`Excluir a arte "${libArtIndex[id]?.name||''}"? O arquivo é apagado e não dá para desfazer.`)) return;
   try{ await libAdminFetch(`/api/admin/library/arts/${id}`,{method:'DELETE'}); await loadLibrary(); }
@@ -1791,10 +1648,13 @@ function orderSummary(o){
   return `${date} · ${p.shirt_model||''} ${p.color||''} · ${qty} ${qty===1?'peça':'peças'} (${sizes.map(([s,q])=>`${s} ×${q}`).join(', ')})${sides.length?' · '+joinPt(sides):''}`;
 }
 // Etapas que o cliente vê: pago = em produção; "Pronto" é marcado no Admin.
+// Etapas do Admin: Em análise / Em fila / Em impressão = "Em produção"; Finalizado = Pronto; Enviado.
+const CUSTOMER_STAGE={EM_ANALISE:'em análise',EM_FILA:'na fila',EM_IMPRESSAO:'imprimindo'};
 function orderSteps(o){
-  const cur=o.status==='PRONTO'?4:o.payment_status==='PAID'?3:1;
-  return `<div class="p-steps">${['Pedido feito','Pagamento aprovado','Em produção','Pronto'].map((label,i)=>{
-    const n=i+1, cls=n<cur||cur===4?'done':n===cur?'now':'';
+  const cur=o.stage==='ENVIADO'?5:(o.status==='PRONTO'||o.stage==='FINALIZADO')?4:o.payment_status==='PAID'?3:1;
+  const sub=CUSTOMER_STAGE[o.stage];
+  return `<div class="p-steps">${['Pedido feito','Pagamento aprovado',`Em produção${cur===3&&sub?` · ${sub}`:''}`,'Pronto','Enviado'].map((label,i)=>{
+    const n=i+1, cls=n<cur||cur===5?'done':n===cur?'now':'';
     return `${i?`<span class="p-bar${n<=cur?' done':''}"></span>`:''}<span class="p-step ${cls}"><i>${cls==='done'?'✓':cls==='now'?'●':''}</i>${label}</span>`;
   }).join('')}</div>`;
 }
@@ -1983,29 +1843,330 @@ async function backupNow(){
   }catch(e){ stat('#backupStatus',e.message,false); }
   finally{ btn.disabled=false; }
 }
-/* ---------- Admin: métricas próprias (anônimas) ---------- */
-async function loadMetrics(){
-  if(!adminKey) return;
-  const days=Number($('#metricsDays').value)||30;
-  const r=await fetch(`/api/admin/metrics?days=${days}`,{headers:adminHeaders()});
-  if(r.status===401){ clearAdmin(); return; }
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok){ $('#metricsBox').innerHTML=`<p>${esc(d.detail||'Erro ao carregar.')}</p>`; return; }
-  const byDay={}, row=day=>byDay[day]||(byDay[day]={home:0,editor:0,digital:0,views:0,signups:0,orders:0,paid:0,revenue:0});
-  d.hits.forEach(h=>{const x=row(h.day); x.views+=h.hits; if(h.page in x) x[h.page]+=h.hits;});
-  d.signups.forEach(s=>{row(s.day).signups+=s.n;});
-  d.orders.forEach(o=>{const x=row(o.day); x.orders++; if(o.payment_status==='PAID'){x.paid++; x.revenue+=o.total;}});
-  const sum=k=>Object.values(byDay).reduce((a,x)=>a+x[k],0);
-  const home=sum('home'), paid=sum('paid');
-  const percent=(a,b)=>b?(a/b*100).toFixed(1).replace('.',',')+'%':'–';
-  const cards=[['Páginas vistas',sum('views')],['Entradas no site',home],['Abriram o editor',sum('editor')],['Cadastros',sum('signups')],
-    ['Pedidos criados',sum('orders')],['Pedidos pagos',paid],['Receita paga',money(sum('revenue'))],['Conversão (pagos ÷ entradas)',percent(paid,home)]];
-  const rows=Object.entries(byDay).sort(([a],[b])=>b.localeCompare(a));
-  $('#metricsBox').innerHTML=`<div class="metric-cards">${cards.map(([l,v])=>`<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>`
-    +(rows.length?`<table class="orders-table"><thead><tr><th>Dia</th><th>Entradas</th><th>Editor</th><th>Artes</th><th>Cadastros</th><th>Pedidos</th><th>Pagos</th><th>Receita</th></tr></thead><tbody>
-      ${rows.map(([day,x])=>`<tr><td>${day.split('-').reverse().join('/')}</td><td>${x.home}</td><td>${x.editor}</td><td>${x.digital}</td><td>${x.signups}</td><td>${x.orders}</td><td>${x.paid}</td><td>${money(x.revenue)}</td></tr>`).join('')}
-    </tbody></table>`:'<p>Sem dados no período.</p>');
+/* ============ Admin: painel, pedidos, clientes, custos, artes, mockups ============ */
+const ADM={pane:'dash',days:30,group:'day',orders:[],customers:[],dash:null,filter:'ALL',libSel:null};
+const STAGES=[['PAGO','Pago'],['EM_ANALISE','Em análise'],['EM_FILA','Em fila'],['EM_IMPRESSAO','Em impressão'],['FINALIZADO','Finalizado'],['ENVIADO','Enviado']];
+const STAGE_LABEL=Object.fromEntries(STAGES);
+const ORDER_FILTERS=[['ALL','Todos'],['AGUARDANDO','Aguardando pagamento'],...STAGES,['PREMIUM','Premium'],['CANCELADO','Cancelados']];
+const FILTER_LABEL=Object.fromEntries(ORDER_FILTERS);
+// Em que ponto o pedido está, numa chave só (filtro, cor e contagem).
+function orderStageKey(o){
+  if(o.status==='CANCELADO') return 'CANCELADO';
+  if(o.payment_status!=='PAID') return 'AGUARDANDO';
+  if(o.sale_type==='PREMIUM_SUB') return 'PREMIUM';
+  return o.stage||(o.status==='PRONTO'?'FINALIZADO':'PAGO');
 }
+async function admFetch(url,opts={}){
+  const r=await fetch(url,{...opts,headers:adminHeaders(opts.headers)}), d=await r.json().catch(()=>({}));
+  if(r.status===401){ clearAdmin(); openAdminLogin(); throw new Error('Entre no Admin de novo.'); }
+  if(!r.ok) throw new Error(d.detail||'Erro ao falar com o servidor.');
+  return d;
+}
+const pct=(a,b)=>b?(a/b*100).toFixed(1).replace('.',',')+'%':'–';
+const localDay=t=>{const d=new Date(t);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const waLink=phone=>{const d=String(phone||'').replace(/\D/g,'');return d?`https://wa.me/${d.length<=11?'55'+d:d}`:''};
+
+function admShow(pane){
+  ADM.pane=pane;
+  $$('[data-adm]').forEach(b=>{const on=b.dataset.adm===pane; b.classList.toggle('on',on); b.setAttribute('aria-selected',String(on));});
+  $$('.adm-pane').forEach(p=>p.hidden=p.dataset.pane!==pane);
+  ({dash:loadDashboard,orders:loadOrders,customers:loadCustomers,costs:loadCosts,arts:renderLibraryAdmin,
+    mockups:renderMockupsList,more:()=>{loadLgpdRequests();loadBackups()}}[pane]||(()=>{}))();
+}
+function enterAdmin(){
+  if(!adminKey){ openAdminLogin(); return; }
+  $('#admWho').textContent=`Logado como ${adminUser}`;
+  admShow(ADM.pane);
+}
+function bindAdmin(){
+  $$('[data-adm]').forEach(b=>b.onclick=()=>admShow(b.dataset.adm));
+  $('#refreshOrders').onclick=()=>admShow(ADM.pane);
+  $$('#admin [data-days]').forEach(b=>b.onclick=()=>{ADM.days=Number(b.dataset.days);$$('#admin [data-days]').forEach(x=>x.classList.toggle('on',x===b));loadDashboard()});
+  $$('#admin [data-group]').forEach(b=>b.onclick=()=>{ADM.group=b.dataset.group;$$('#admin [data-group]').forEach(x=>x.classList.toggle('on',x===b));if(ADM.dash)renderDashboard()});
+  $('#ordersSearch').oninput=renderOrders;
+  $('#customersSearch').oninput=renderCustomers;
+  $('#costsForm').onsubmit=saveCosts;
+  $('#mockupToggle').onclick=()=>{const w=$('#mockupFormWrap'), open=w.hidden; w.hidden=!open; $('#mockupToggle').setAttribute('aria-expanded',String(open));
+    $('#mockupToggle').textContent=open?'Fechar':'+ Adicionar ou trocar foto'; if(open) w.scrollIntoView({block:'nearest'});};
+  const drop=$('#libUploadForm');
+  ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag')}));
+  ['dragleave','dragend','drop'].forEach(e=>drop.addEventListener(e,()=>drop.classList.remove('drag')));
+  drop.addEventListener('drop',ev=>{ev.preventDefault();uploadLibraryFiles([...ev.dataTransfer.files])});
+  $('#libFiles').onchange=e=>{uploadLibraryFiles([...e.target.files]);e.target.value=''};
+}
+
+/* ---------- Painel ---------- */
+async function loadDashboard(){
+  if(!adminKey) return;
+  $('#dashCards').innerHTML='<p class="adm-note">Carregando...</p>';
+  try{
+    const [dash,orders]=await Promise.all([admFetch(`/api/admin/dashboard?days=${ADM.days}`),admFetch('/api/orders')]);
+    ADM.dash=dash; ADM.orders=orders;
+  }catch(e){ $('#dashCards').innerHTML=`<p class="error">${esc(e.message)}</p>`; return; }
+  renderDashboard();
+}
+function periodKey(day,group){
+  if(group==='day') return day;
+  if(group==='month') return day.slice(0,7);
+  const d=new Date(day+'T12:00:00'); d.setDate(d.getDate()-((d.getDay()+6)%7)); return localDay(d.getTime()); // segunda-feira
+}
+function periodLabel(k,group){
+  if(group==='month'){const [y,m]=k.split('-');return `${MONTHS[+m-1]}/${y.slice(2)}`;}
+  const [,m,d]=k.split('-'); return `${group==='week'?'sem ':''}${d}/${m}`;
+}
+function renderDashboard(){
+  const D=ADM.dash, g=ADM.group, rows={};
+  const R=k=>rows[k]||(rows[k]={visits:0,signups:0,premium:0,orders:0,paid:0,revenue:0,cost:0});
+  for(let t=Date.now()-(D.days-1)*864e5;t<=Date.now()+1;t+=864e5) R(periodKey(localDay(t),g));
+  // "visit" = abriu o site (1 por aba). Antes dele existir, conta a página inicial.
+  const hasVisit=D.hits.some(h=>h.page==='visit');
+  D.hits.forEach(h=>{ if(h.page===(hasVisit?'visit':'home')) R(periodKey(h.day,g)).visits+=h.hits; });
+  D.signups.forEach(s=>{ R(periodKey(s.day,g)).signups+=s.n; });
+  D.orders.forEach(o=>{
+    const x=R(periodKey(o.day,g)), paid=o.payment_status==='PAID';
+    if(o.sale_type==='PREMIUM_SUB'){ if(paid) x.premium++; }
+    else { x.orders++; if(paid) x.paid++; }
+    if(paid){ x.revenue+=Number(o.total)||0; x.cost+=Number(o.cost)||0; }
+  });
+  const keys=Object.keys(rows).sort(), sum=k=>keys.reduce((a,x)=>a+rows[x][k],0);
+  const visits=sum('visits'), revenue=sum('revenue'), cost=sum('cost'), profit=revenue-cost, paid=sum('paid');
+  const T=D.totals||{};
+  $('#dashCostsHint').hidden=!!D.costs_set;
+  const card=(label,value,sub='',cls='')=>`<div class="adm-kpi ${cls}"><span>${label}</span><b>${value}</b>${sub?`<small>${sub}</small>`:''}</div>`;
+  $('#dashCards').innerHTML=[
+    card('Visitas',visits.toLocaleString('pt-BR'),'pessoas que abriram o site'),
+    card('Contas criadas',sum('signups'),`${T.customers||0} no total`),
+    card('Viraram premium',sum('premium'),`${T.premium_active||0} premium ativos`),
+    card('Pedidos feitos',sum('orders'),`${paid} pagos · conversão ${pct(paid,visits)}`),
+    card('Receita',money(revenue),`ticket médio ${paid?money(revenue/(paid+sum('premium'))):'–'}`,'money'),
+    card('Custo',money(cost),D.costs_set?'pela aba Custos':'preencha a aba Custos','cost'),
+    card('Lucro',money(profit),`margem ${pct(profit,revenue)}`,profit>=0?'profit':'loss'),
+    card('Em produção agora',T.in_production||0,'pagos e não finalizados'),
+  ].join('');
+  const labels=keys.map(k=>periodLabel(k,g));
+  barChart($('#dashChartMoney'),labels,[
+    {name:'Receita',color:'#9b59b6',values:keys.map(k=>rows[k].revenue)},
+    {name:'Custo',color:'#e2873d',values:keys.map(k=>rows[k].cost)},
+    {name:'Lucro',color:'#2e9e6b',values:keys.map(k=>rows[k].revenue-rows[k].cost)}],v=>money(v));
+  barChart($('#dashChartPeople'),labels,[
+    {name:'Visitas',color:'#6a6ad1',values:keys.map(k=>rows[k].visits)},
+    {name:'Contas novas',color:'#c39bd3',values:keys.map(k=>rows[k].signups)}],v=>String(Math.round(v)));
+  renderDashStages();
+  const list=[...keys].reverse().filter(k=>Object.values(rows[k]).some(Boolean));
+  $('#dashTable').innerHTML=list.length?`<table class="adm-table"><thead><tr><th>${{day:'Dia',week:'Semana',month:'Mês'}[g]}</th><th>Visitas</th><th>Contas</th><th>Premium</th><th>Pedidos</th><th>Pagos</th><th>Receita</th><th>Custo</th><th>Lucro</th></tr></thead><tbody>
+    ${list.map(k=>{const x=rows[k];return `<tr><td><b>${periodLabel(k,g)}</b></td><td>${x.visits}</td><td>${x.signups}</td><td>${x.premium}</td><td>${x.orders}</td><td>${x.paid}</td><td>${money(x.revenue)}</td><td>${money(x.cost)}</td><td class="${x.revenue-x.cost<0?'neg':''}">${money(x.revenue-x.cost)}</td></tr>`}).join('')}
+    </tbody></table>`:'<p class="adm-empty">Sem movimento no período.</p>';
+}
+function renderDashStages(){
+  const count={}; ADM.orders.forEach(o=>{const k=orderStageKey(o); count[k]=(count[k]||0)+1;});
+  $('#dashStages').innerHTML=[['AGUARDANDO','Aguardando pagamento'],...STAGES].map(([k,l])=>
+    `<button type="button" class="adm-stage st-${k}" data-goto-stage="${k}"><b>${count[k]||0}</b><span>${l}</span></button>`).join('');
+  $$('#dashStages [data-goto-stage]').forEach(b=>b.onclick=()=>{ADM.filter=b.dataset.gotoStage;admShow('orders')});
+}
+// Gráfico de barras simples em SVG (sem biblioteca).
+function barChart(el,labels,series,fmt){
+  const W=640,H=230,pl=58,pb=28,pt=10,pr=8, n=labels.length||1;
+  const vals=series.flatMap(s=>s.values), max=Math.max(1,...vals), min=Math.min(0,...vals), span=max-min;
+  const y=v=>pt+(H-pt-pb)*(1-(v-min)/span), gw=(W-pl-pr)/n, bw=Math.max(1.5,Math.min(18,(gw-4)/series.length));
+  const ticks=[0,.25,.5,.75,1].map(f=>min+span*f);
+  const step=Math.ceil(n/12);
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(series.map(s=>s.name).join(', '))}">
+    ${ticks.map(v=>`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${pl-6}" y="${y(v)+4}" class="ax" text-anchor="end">${esc(fmt(v))}</text>`).join('')}
+    ${series.map((s,si)=>s.values.map((v,i)=>{const x=pl+gw*i+(gw-bw*series.length)/2+bw*si, y0=y(Math.max(0,v)), y1=y(Math.min(0,v));
+      return `<rect x="${x}" y="${y0}" width="${bw}" height="${Math.max(0,y1-y0)}" rx="2" fill="${s.color}"><title>${esc(labels[i])} · ${esc(s.name)}: ${esc(fmt(v))}</title></rect>`}).join('')).join('')}
+    ${labels.map((l,i)=>i%step?'':`<text x="${pl+gw*i+gw/2}" y="${H-8}" class="ax" text-anchor="middle">${esc(l)}</text>`).join('')}
+  </svg><div class="adm-legend">${series.map(s=>`<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>`;
+}
+
+/* ---------- Pedidos ---------- */
+async function loadOrders(){
+  if(!adminKey) return;
+  try{ ADM.orders=await admFetch('/api/orders'); }
+  catch(e){ $('#ordersTable').innerHTML=`<p class="error">${esc(e.message)}</p>`; return; }
+  renderOrders();
+  if(ADM.pane==='dash'&&ADM.dash) renderDashStages();
+}
+function orderLine(o){
+  const d=o.data||{}, p=d.product||{};
+  if(o.sale_type==='DTF_ONLY'){const a=d.production_art||{}, dpi=Number(CONFIG.dpi)||300;
+    return a.height_px?`chapa ${fmtCm(a.height_px/dpi*2.54)} cm · ${(d.sources||[]).length} arte(s)`:'chapa';}
+  if(o.sale_type==='PREMIUM_SUB') return `${d.premium_days||30} dias`;
+  const sizes=Object.entries(p.sizes||{}).filter(([,q])=>q>0).map(([s,q])=>`${s}×${q}`).join(' ');
+  return `${p.shirt_model||''} ${p.color||''} · ${sizes}`;
+}
+function renderOrders(){
+  const counts={ALL:ADM.orders.length}; ADM.orders.forEach(o=>{const k=orderStageKey(o);counts[k]=(counts[k]||0)+1;});
+  $('#ordersFilters').innerHTML=ORDER_FILTERS.filter(([k])=>k==='ALL'||counts[k]).map(([k,l])=>
+    `<button type="button" class="adm-chip st-${k}${ADM.filter===k?' on':''}" data-ofilter="${k}">${l} <b>${counts[k]||0}</b></button>`).join('');
+  $$('#ordersFilters [data-ofilter]').forEach(b=>b.onclick=()=>{ADM.filter=b.dataset.ofilter;renderOrders()});
+  const q=normTxt($('#ordersSearch').value.trim());
+  const list=ADM.orders.filter(o=>(ADM.filter==='ALL'||orderStageKey(o)===ADM.filter)
+    &&(!q||normTxt(`${o.order_number} ${o.customer_name} ${o.customer_email||''}`).includes(q)));
+  $('#ordersTable').innerHTML=list.length?`<table class="adm-table adm-orders"><thead><tr>
+      <th>Pedido</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Etapa</th><th>Ações</th></tr></thead><tbody>
+    ${list.map(o=>{const k=orderStageKey(o), prod=o.payment_status==='PAID'&&o.sale_type!=='PREMIUM_SUB', wa=waLink(o.customer_whatsapp);
+      const profit=o.cost==null?null:Number(o.total)-Number(o.cost);
+      return `<tr>
+        <td><b>${esc(o.order_number)}</b><small>${fmtDate(o.created_at)}</small></td>
+        <td>${esc(o.customer_name)}<small>${esc(o.customer_email||'')}${wa?` · <a href="${wa}" target="_blank" rel="noopener">WhatsApp</a>`:''}</small></td>
+        <td>${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}<small>${esc(orderLine(o))}</small></td>
+        <td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>
+        <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
+          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}</td>
+        <td class="adm-actions">${o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
+          ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
+      </tr>`;}).join('')}</tbody></table>`
+    :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
+  $$('#ordersTable [data-stage]').forEach(sel=>sel.onchange=async()=>{
+    sel.disabled=true;
+    try{ await admFetch(`/api/admin/orders/${sel.dataset.stage}/stage`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:sel.value})});
+      const o=ADM.orders.find(x=>x.id===sel.dataset.stage); o.stage=sel.value; if(['FINALIZADO','ENVIADO'].includes(sel.value)) o.status='PRONTO';
+      renderOrders(); }
+    catch(e){ alert(e.message); sel.disabled=false; }
+  });
+  $$('#ordersTable [data-pay]').forEach(b=>b.onclick=async()=>{
+    // Libera a produção: com pagamento real no site, um clique errado sai caro.
+    if(!confirm(`Marcar o pedido ${b.dataset.num} como pago? Use só se o pagamento foi recebido fora do site.`)) return;
+    try{ await admFetch(`/api/orders/${b.dataset.pay}/mark-paid`,{method:'POST'}); loadOrders(); }catch(e){ alert(e.message); }
+  });
+  $$('#ordersTable [data-files]').forEach(b=>b.onclick=async()=>{
+    b.disabled=true;
+    try{
+      const r=await fetch(`/api/admin/orders/${b.dataset.files}/files`,{headers:adminHeaders()});
+      if(r.status===401){ clearAdmin(); return openAdminLogin(); }
+      if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.detail||'Erro ao baixar os arquivos do pedido'); }
+      const a=document.createElement('a'); a.href=URL.createObjectURL(await r.blob()); a.download=`pedido_${b.dataset.name}.zip`; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+    }catch(e){ alert(e.message); }
+    finally{ b.disabled=false; }
+  });
+}
+
+/* ---------- Clientes ---------- */
+async function loadCustomers(){
+  try{ ADM.customers=await admFetch('/api/admin/customers'); }
+  catch(e){ $('#customersTable').innerHTML=`<p class="error">${esc(e.message)}</p>`; return; }
+  renderCustomers();
+}
+function renderCustomers(){
+  const q=normTxt($('#customersSearch').value.trim()), now=Date.now()/1000;
+  const list=ADM.customers.filter(c=>!q||normTxt(`${c.full_name} ${c.email} ${c.phone}`).includes(q));
+  const prem=ADM.customers.filter(c=>c.premium_until>now).length;
+  $('#customersCount').textContent=`${plural(ADM.customers.length,'conta','contas')} · ${prem} premium ativo${prem===1?'':'s'}`;
+  $('#customersTable').innerHTML=list.length?`<table class="adm-table"><thead><tr><th>Cliente</th><th>Telefone</th><th>Conta criada</th><th>Premium</th><th>Pedidos</th><th>Total pago</th></tr></thead><tbody>
+    ${list.map(c=>{const wa=waLink(c.phone);return `<tr>
+      <td><b>${esc(c.full_name)}</b><small>${esc(c.email)}${c.google?' · Google':''}</small></td>
+      <td>${c.phone?`${esc(formatPhoneBR(c.phone))}${wa?`<small><a href="${wa}" target="_blank" rel="noopener">WhatsApp</a></small>`:''}`:'–'}</td>
+      <td>${fmtDate(c.created_at)}</td>
+      <td>${c.premium_until>now?`<span class="adm-pill st-PREMIUM">até ${fmtDate(c.premium_until)}</span>`:c.premium_until?'<small>vencido</small>':'–'}</td>
+      <td>${c.orders}</td><td>${money(c.spent)}</td></tr>`}).join('')}</tbody></table>`
+    :`<p class="adm-empty">${ADM.customers.length?'Nenhum cliente encontrado.':'Nenhuma conta criada ainda.'}</p>`;
+}
+
+/* ---------- Custos ---------- */
+async function loadCosts(){
+  let d; try{ d=await admFetch('/api/admin/costs'); }catch(e){ return stat('#costsStatus',e.message,false); }
+  const f=$('#costsForm');
+  ['dtf_per_meter','press_per_piece','packaging_per_order','payment_fee_pct'].forEach(k=>f.elements[k].value=d.costs[k]||'');
+  $('#costsRoll').textContent=fmtCm(sheetWidthCm());
+  $('#costsShirts').innerHTML=d.models.map(m=>`<label><span>${esc(m.name)}</span><div class="adm-money"><i>R$</i>
+    <input type="number" min="0" step="0.01" data-shirt="${m.id}" value="${d.costs.shirt_cost[m.id]||''}"></div></label>`).join('');
+}
+async function saveCosts(ev){
+  ev.preventDefault();
+  const f=ev.currentTarget, body={shirt_cost:{}};
+  ['dtf_per_meter','press_per_piece','packaging_per_order','payment_fee_pct'].forEach(k=>body[k]=f.elements[k].value||0);
+  $$('#costsShirts [data-shirt]').forEach(i=>body.shirt_cost[i.dataset.shirt]=i.value||0);
+  try{ await admFetch('/api/admin/costs',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    stat('#costsStatus','Custos salvos. O painel já usa os valores novos.',true); ADM.dash=null; }
+  catch(e){ stat('#costsStatus',e.message,false); }
+}
+
+/* ---------- Artes (biblioteca) ---------- */
+function renderLibraryAdmin(){
+  const byName=list=>[...list].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR',{numeric:true}));
+  if(!libCat(ADM.libSel)) ADM.libSel=(byName(libSubs('free'))[0]||byName(libSubs('premium'))[0]||{}).id||null;
+  $('#libTree').innerHTML=LIB_SIDES.filter(libCat).map(id=>`<div class="adm-lib-group"><div class="adm-lib-gtitle ${id}">${id==='premium'?'★':'↓'} ${esc(libCat(id).name)}
+      <small>${plural(libTotal(id),'arte','artes')}</small></div>
+      ${byName(libSubs(id)).map(c=>`<button type="button" class="adm-lib-folder${c.id===ADM.libSel?' on':''}" data-lib-sel="${c.id}">
+        <span>${esc(c.name)}</span><small>${c.art_count||0}</small></button>`).join('')||'<p class="adm-note">Nenhuma pasta.</p>'}</div>`).join('');
+  $$('#libTree [data-lib-sel]').forEach(b=>b.onclick=()=>{ADM.libSel=b.dataset.libSel;renderLibraryAdmin()});
+  const c=libCat(ADM.libSel);
+  $('#libUploadForm').hidden=!c;
+  if(!c){ $('#libFolderHead').innerHTML='<h3>Crie uma pasta pra começar</h3>'; $('#libAdminArts').innerHTML=''; return; }
+  const to=c.access==='premium'?'free':'premium';
+  $('#libFolderHead').innerHTML=`<div><h3>${esc(c.name)}</h3><span class="lib-badge ${c.access}">${ACCESS_LABEL[c.access]}</span> <small class="adm-note">${plural(c.art_count||0,'arte','artes')}</small></div>
+    <div class="adm-lib-actions"><button type="button" class="adm-btn sm ghost" data-lib-act="rename">Renomear</button>
+      <button type="button" class="adm-btn sm ghost" data-lib-act="move">Mover para ${ACCESS_LABEL[to]}</button>
+      <button type="button" class="adm-btn sm danger" data-lib-act="delete">Excluir pasta</button></div>`;
+  const act=async fn=>{try{await fn();await loadLibrary()}catch(e){alert(e.message)}};
+  const patch=body=>libAdminFetch(`/api/admin/library/categories/${c.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  $$('#libFolderHead [data-lib-act]').forEach(b=>b.onclick=()=>{
+    const a=b.dataset.libAct;
+    if(a==='rename'){const name=prompt('Novo nome da pasta:',c.name); if(name&&name.trim()) act(()=>patch({name}));}
+    if(a==='move'&&confirm(`Mover "${c.name}" para ${ACCESS_LABEL[to]}? ${c.art_count?`As ${plural(c.art_count,'arte','artes')} passam a ser ${to==='premium'?'premium':'grátis'}.`:''}`)) act(()=>patch({parent_id:to}));
+    if(a==='delete'&&confirm(`Excluir a pasta "${c.name}" e ${plural(c.art_count||0,'arte','artes')}? Os arquivos são apagados e não dá para desfazer.`))
+      act(()=>libAdminFetch(`/api/admin/library/categories/${c.id}`,{method:'DELETE'}));
+  });
+  renderLibraryAdminArts(c);
+}
+async function renderLibraryAdminArts(c){
+  const box=$('#libAdminArts');
+  if(!libArts[c.id]){ box.innerHTML='<p class="adm-note">Carregando artes...</p>';
+    try{ const r=await fetch(`/api/library/categories/${c.id}/arts`); libArts[c.id]=r.ok?await r.json().catch(()=>[]):[]; }catch{ libArts[c.id]=[]; } }
+  if(ADM.libSel!==c.id) return;
+  const arts=[...libArts[c.id]].sort((a,b)=>b.created_at-a.created_at);
+  arts.forEach(a=>{libArtIndex[a.id]={name:a.name,access:c.access}});
+  box.innerHTML=arts.map(a=>`<figure class="adm-art"><div><img src="/api/library/arts/${a.id}/thumb" alt="" loading="lazy"></div>
+      <figcaption title="${esc(a.name)}">${esc(a.name)}</figcaption><button type="button" data-lib-del="${a.id}" aria-label="Excluir ${esc(a.name)}" title="Excluir">🗑</button></figure>`).join('')
+    ||'<p class="adm-empty">Nenhuma arte nesta pasta. Envie pela área acima.</p>';
+  $$('#libAdminArts [data-lib-del]').forEach(b=>b.onclick=()=>deleteLibraryArt(b.dataset.libDel));
+}
+async function createLibraryCategory(ev){
+  ev.preventDefault();
+  try{
+    const d=await libAdminFetch('/api/admin/library/categories',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:$('#libCatName').value,parent_id:$('#libParent').value})});
+    $('#libCatName').value=''; stat('#libCatStatus','Pasta criada!',true); ADM.libSel=d.id; await loadLibrary();
+  }catch(e){ stat('#libCatStatus',e.message,false); }
+}
+function uploadLibraryArts(ev){ ev.preventDefault(); }
+async function uploadLibraryFiles(files){
+  const target=ADM.libSel;
+  files=files.filter(f=>/^image\//.test(f.type));
+  if(!target) return stat('#libUploadStatus','Crie ou escolha uma pasta primeiro.',false);
+  if(!files.length) return stat('#libUploadStatus','Escolha imagens PNG, JPG ou WEBP.',false);
+  const fd=new FormData(); fd.append('category_id',target); files.forEach(f=>fd.append('files',f));
+  $('#libUploadForm').classList.add('busy');
+  stat('#libUploadStatus',`Enviando ${plural(files.length,'arte','artes')}...`,true);
+  try{
+    const d=await libAdminFetch('/api/admin/library/arts',{method:'POST',body:fd});
+    stat('#libUploadStatus',`${d.saved} ${d.saved===1?'arte enviada':'artes enviadas'}${d.skipped.length?`. Ignorados: ${d.skipped.join(', ')}`:''}.`,true);
+    delete libArts[target]; await loadLibrary();
+  }catch(e){ stat('#libUploadStatus',e.message,false); }
+  finally{ $('#libUploadForm').classList.remove('busy'); }
+}
+
+/* ---------- Mockups ---------- */
+function renderMockupsList(){
+  const models=(CONFIG?.shirt_models)||[], byModel={};
+  shirtMockups.forEach(m=>(byModel[m.model_id]||(byModel[m.model_id]=[])).push(m));
+  const ids=[...models.map(m=>m.id),...Object.keys(byModel).filter(id=>!models.some(m=>m.id===id))];
+  $('#mockupsList').innerHTML=ids.filter(id=>byModel[id]).map(id=>{
+    const name=models.find(m=>m.id===id)?.name||id;
+    const list=byModel[id].sort((a,b)=>(a.color+a.side).localeCompare(b.color+b.side));
+    return `<div class="adm-mk-group"><h4>${esc(name)} <small>${plural(list.length,'foto','fotos')}</small></h4><div class="adm-mk-grid">
+      ${list.map(m=>`<figure class="adm-mk"><div><img src="${m.preview_url}" alt="" loading="lazy"></div>
+        <figcaption><b>${esc(m.color)}</b> · ${m.side==='BACK'?'Costas':'Frente'}</figcaption>
+        <button type="button" data-delmock="${m.id}" aria-label="Remover foto ${esc(name)} ${esc(m.color)}" title="Remover">🗑</button></figure>`).join('')}</div></div>`;
+  }).join('')||'<p class="adm-empty">Nenhuma foto cadastrada: o editor usa o desenho padrão.</p>';
+  $$('#mockupsList [data-delmock]').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Remover esta foto de mockup?')) return;
+    try{ await admFetch(`/api/admin/shirt-mockups/${b.dataset.delmock}`,{method:'DELETE'}); }catch(e){ return alert(e.message); }
+    await loadShirtMockups(); renderMockupsList(); updateShirtVisual();
+  });
+}
+
 /* ---------- Admin: solicitações LGPD ---------- */
 const LGPD_STATUS={ABERTO:'Aberto',EM_ANDAMENTO:'Em andamento',CONCLUIDO:'Concluído',RECUSADO:'Recusado'};
 async function loadLgpdRequests(){

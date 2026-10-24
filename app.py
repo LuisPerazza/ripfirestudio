@@ -316,6 +316,11 @@ def init_db():
         if "payment_ref" not in cols:
             # Id do pagamento no Mercado Pago: é por ele que se acha a venda no painel de lá.
             con.execute("ALTER TABLE orders ADD COLUMN payment_ref TEXT")
+        if "stage" not in cols:
+            # Etapa da produção que o Admin acompanha (ver ORDER_STAGES).
+            con.execute("ALTER TABLE orders ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
+            con.execute("ALTER TABLE orders ADD COLUMN stage_at REAL NOT NULL DEFAULT 0")
+        con.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
         mockup_cols = {r["name"] for r in con.execute("PRAGMA table_info(shirt_mockups)").fetchall()}
         if "side" not in mockup_cols:
@@ -1504,6 +1509,7 @@ def order_for_customer(row: dict[str, Any]) -> dict[str, Any]:
         ] if is_dtf else [],
         "premium_arts": sorted(premium_names),
         "premium_days": data.get("premium_days"),
+        "stage": row.get("stage") or "",
     }
 
 
@@ -1834,7 +1840,7 @@ def admin_download_backup(name: str):
 # GA e Meta só contam quem aceita os cookies. Aqui fica só "dia, página, total":
 # não dá pra saber quem foi, então não é dado pessoal (LGPD, art. 12) e conta
 # todo mundo. O Admin cruza com os pedidos do banco pra mostrar o funil real.
-METRIC_PAGES = {"home", "editor", "digital", "profile", "privacidade", "termos", "reembolso", "lgpd"}
+METRIC_PAGES = {"visit", "home", "editor", "digital", "profile", "privacidade", "termos", "reembolso", "lgpd"}
 BOT_UA = re.compile(r"bot|crawl|spider|slurp|preview|headless|lighthouse|curl|wget|python|scrapy", re.I)
 
 
@@ -2651,11 +2657,13 @@ def list_orders() -> list[dict[str, Any]]:
     cancel_stale_orders()
     with db() as con:
         rows = con.execute(
-            """SELECT id,order_number,created_at,customer_name,sale_type,status,
-                      payment_status,total,folder_path,production_drop_path,data_json
+            """SELECT id,order_number,created_at,customer_name,customer_email,customer_whatsapp,
+                      sale_type,status,payment_status,total,folder_path,production_drop_path,
+                      data_json,stage,stage_at,payment_ref
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
 
+    costs = get_costs()
     result: list[dict[str, Any]] = []
     for row in rows:
         d = dict(row)
@@ -2663,6 +2671,10 @@ def list_orders() -> list[dict[str, Any]]:
             d["data"] = json.loads(d.pop("data_json"))
         except Exception:
             d["data"] = {}
+        try:
+            d["cost"] = order_cost(d, d["data"], costs) if d["payment_status"] == "PAID" else None
+        except Exception:
+            d["cost"] = None
         result.append(d)
     return result
 
@@ -2694,8 +2706,176 @@ def mark_ready(order_id: str) -> dict[str, Any]:
     if row["payment_status"] != "PAID":
         raise HTTPException(400, "Pedido ainda não está pago.")
     with db() as con:
-        con.execute("UPDATE orders SET status='PRONTO' WHERE id=?", (order_id,))
+        con.execute("UPDATE orders SET status='PRONTO', stage='FINALIZADO', stage_at=? WHERE id=?",
+                    (time.time(), order_id))
     return {"ok": True, "status": "PRONTO"}
+
+
+# ---------- Etapas da produção (Admin) ----------
+# Pago → Em análise → Em fila → Em impressão → Finalizado → Enviado. Vazio = pago
+# e ainda não mexido. Finalizado/Enviado também marcam o pedido como PRONTO,
+# que é o que o cliente vê em "Minha conta".
+ORDER_STAGES = {
+    "PAGO": "Pago", "EM_ANALISE": "Em análise", "EM_FILA": "Em fila",
+    "EM_IMPRESSAO": "Em impressão", "FINALIZADO": "Finalizado", "ENVIADO": "Enviado",
+}
+
+
+@app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_admin)])
+def set_order_stage(order_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    stage = str(payload.get("stage") or "").upper()
+    if stage not in ORDER_STAGES:
+        raise HTTPException(400, "Etapa inválida.")
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["sale_type"] == "PREMIUM_SUB":
+        raise HTTPException(400, "Pedido de premium não tem produção.")
+    if row["payment_status"] != "PAID":
+        raise HTTPException(400, "Pedido ainda não está pago.")
+    with db() as con:
+        con.execute(
+            """UPDATE orders SET stage=?, stage_at=?,
+               status=CASE WHEN ? IN ('FINALIZADO','ENVIADO') THEN 'PRONTO'
+                           WHEN status='PRONTO' THEN 'LIBERADO_PRODUCAO' ELSE status END
+               WHERE id=?""",
+            (stage, time.time(), stage, order_id)
+        )
+    return {"ok": True, "stage": stage}
+
+
+# ---------- Custos (Admin) ----------
+# Guardados na tabela settings (vão pro Supabase junto com o resto). Com eles o
+# painel calcula o custo e o lucro de cada pedido pago.
+DEFAULT_COSTS: dict[str, Any] = {
+    "dtf_per_meter": 0.0,      # impressão DTF: custo por metro do rolo (filme, tinta, pó)
+    "press_per_piece": 0.0,    # prensagem / mão de obra por camiseta
+    "packaging_per_order": 0.0,  # embalagem e outros custos fixos por pedido
+    "payment_fee_pct": 0.0,    # taxa do meio de pagamento (% do valor)
+    "shirt_cost": {},          # valor bruto da camiseta lisa por modelo (id -> R$)
+}
+
+
+def get_costs() -> dict[str, Any]:
+    with db() as con:
+        row = con.execute("SELECT value FROM settings WHERE key='costs'").fetchone()
+    saved = json.loads(row["value"]) if row else {}
+    costs = {**DEFAULT_COSTS, **{k: v for k, v in saved.items() if k in DEFAULT_COSTS}}
+    costs["shirt_cost"] = {m["id"]: float((saved.get("shirt_cost") or {}).get(m["id"]) or 0)
+                           for m in CONFIG.get("shirt_models") or []}
+    return costs
+
+
+def order_cost(row: dict[str, Any], data: dict[str, Any], costs: dict[str, Any]) -> float:
+    """Custo estimado do pedido com os valores da aba Custos."""
+    sale = row["sale_type"]
+    total = float(row["total"] or 0)
+    fee = total * float(costs.get("payment_fee_pct") or 0) / 100
+    if sale in ("PREMIUM_SUB", "DIGITAL_ART"):
+        return round(fee, 2)
+    dpi = float(CONFIG.get("dpi") or 300)
+    per_m = float(costs.get("dtf_per_meter") or 0)
+    roll_m = float(CONFIG.get("dtf_sheet_width_cm") or 58.5) / 100
+    cost = fee + float(costs.get("packaging_per_order") or 0)
+    if sale == "DTF_ONLY":
+        art = data.get("production_art") or {}
+        h_cm = (art.get("height_px") or 0) / dpi * 2.54
+        meters = h_cm / 100  # o que gasta de rolo é o tamanho real da chapa (o mínimo é só regra de preço)
+        return round(cost + meters * per_m, 2)
+    # Camiseta: camisa lisa + prensagem por peça + DTF pela área das artes
+    # (área ÷ largura do rolo = metros de rolo que a arte ocupa).
+    qty = int(data.get("dtf_quantity") or 0)
+    model = (data.get("product") or {}).get("shirt_model_id") or ""
+    shirt = float((costs.get("shirt_cost") or {}).get(model) or 0)
+    area_m2 = 0.0
+    for key in ("production_art", "production_art_back", "production_art_sleeve_right", "production_art_sleeve_left"):
+        art = data.get(key) or {}
+        if art.get("width_px") and art.get("height_px"):
+            area_m2 += (art["width_px"] / dpi * 0.0254) * (art["height_px"] / dpi * 0.0254)
+    dtf = area_m2 / roll_m * per_m if roll_m else 0
+    return round(cost + qty * (shirt + float(costs.get("press_per_piece") or 0) + dtf), 2)
+
+
+@app.get("/api/admin/costs", dependencies=[Depends(require_admin)])
+def admin_get_costs() -> dict[str, Any]:
+    return {"costs": get_costs(), "models": [{"id": m["id"], "name": m["name"]} for m in CONFIG.get("shirt_models") or []]}
+
+
+@app.put("/api/admin/costs", dependencies=[Depends(require_admin)])
+def admin_save_costs(payload: dict[str, Any]) -> dict[str, Any]:
+    def num(v: Any) -> float:
+        try:
+            x = float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Use só números nos custos.")
+        if not 0 <= x <= 1_000_000:
+            raise HTTPException(400, "Valor de custo fora do esperado.")
+        return round(x, 2)
+    costs = {k: num(payload.get(k, 0)) for k in DEFAULT_COSTS if k != "shirt_cost"}
+    if costs["payment_fee_pct"] > 100:
+        raise HTTPException(400, "A taxa do pagamento vai de 0 a 100%.")
+    sent = payload.get("shirt_cost") or {}
+    costs["shirt_cost"] = {m["id"]: num(sent.get(m["id"], 0)) for m in CONFIG.get("shirt_models") or []}
+    with db() as con:
+        con.execute(
+            "INSERT INTO settings (key,value) VALUES('costs',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (json.dumps(costs),)
+        )
+    return {"ok": True, "costs": get_costs()}
+
+
+# ---------- Clientes (Admin) ----------
+@app.get("/api/admin/customers", dependencies=[Depends(require_admin)])
+def admin_customers() -> list[dict[str, Any]]:
+    with db() as con:
+        rows = con.execute(
+            """SELECT c.id, c.created_at, c.email, c.full_name, c.phone, c.premium_until,
+                      CASE WHEN c.google_sub IS NULL THEN 0 ELSE 1 END AS google,
+                      (SELECT COUNT(*) FROM orders o WHERE o.customer_id=c.id) AS orders,
+                      (SELECT COALESCE(SUM(o.total),0) FROM orders o
+                        WHERE o.customer_id=c.id AND o.payment_status='PAID') AS spent
+               FROM customers c ORDER BY c.created_at DESC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------- Painel (Admin) ----------
+@app.get("/api/admin/dashboard", dependencies=[Depends(require_admin)])
+def admin_dashboard(days: int = 30) -> dict[str, Any]:
+    """Tudo que o painel do Admin mostra, por dia: visitas, contas novas,
+    premium, pedidos, receita, custo. O navegador agrupa em semana/mês."""
+    days = max(1, min(days, 730))
+    since_ts = time.time() - days * 86400
+    since_day = time.strftime("%Y-%m-%d", time.localtime(since_ts))
+    day_expr = local_day_sql("created_at")
+    costs = get_costs()
+    with db() as con:
+        hits = [dict(r) for r in con.execute(
+            "SELECT day, page, hits FROM page_hits WHERE day >= ?", (since_day,))]
+        signups = [dict(r) for r in con.execute(
+            f"SELECT {day_expr} AS day, COUNT(*) AS n FROM customers WHERE created_at >= ? GROUP BY 1",
+            (since_ts,))]
+        orders = [dict(r) for r in con.execute(
+            f"""SELECT {day_expr} AS day, sale_type, payment_status, status, stage, total, data_json
+                FROM orders WHERE created_at >= ?""", (since_ts,))]
+        totals = con.execute(
+            """SELECT (SELECT COUNT(*) FROM customers) AS customers,
+                      (SELECT COUNT(*) FROM customers WHERE premium_until > ?) AS premium_active,
+                      (SELECT COUNT(*) FROM orders WHERE payment_status='PAID' AND sale_type!='PREMIUM_SUB'
+                         AND COALESCE(stage,'') NOT IN ('FINALIZADO','ENVIADO')) AS in_production""",
+            (time.time(),)
+        ).fetchone()
+    out_orders = []
+    for o in orders:
+        try:
+            data = json.loads(o.pop("data_json") or "{}")
+        except Exception:
+            data = {}
+        o["cost"] = order_cost(o, data, costs) if o["payment_status"] == "PAID" else 0
+        out_orders.append(o)
+    return {"days": days, "since": since_day, "hits": hits, "signups": signups, "orders": out_orders,
+            "totals": dict(totals), "costs_set": any(
+                v for k, v in costs.items() if k != "shirt_cost") or any(costs["shirt_cost"].values())}
 
 
 @app.get("/api/admin/orders/{order_id}/files", dependencies=[Depends(require_admin)])

@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=47">
+  <link rel="stylesheet" href="/static/styles.css?v=49">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -299,87 +299,153 @@
   </section>
 
   <section id="admin" class="tab">
-    <div class="admin-grid">
-      <div class="admin-col">
-      <section class="panel">
-        <h2>Cadastrar arte</h2>
-        <form id="artworkForm">
-          <label for="artName">Nome</label><input id="artName" name="name" required>
-          <label for="artCategory">Categoria</label><input id="artCategory" name="category" value="Streetwear">
-          <label for="artPrice">Preço digital</label><input id="artPrice" name="digital_price" type="number" min="0" step="0.01" value="9.90">
-          <label class="check"><input name="can_customize" type="checkbox" checked> Usar no personalizador</label>
-          <label class="check"><input name="can_sell_digital" type="checkbox" checked> Vender arquivo digital</label>
-          <label for="artFile">Arquivo</label><input id="artFile" name="artwork" type="file" accept="image/png,image/jpeg,image/webp" required>
-          <button class="primary">Cadastrar</button>
-        </form><div id="adminArtStatus" role="status" aria-live="polite"></div>
+    <div class="adm">
+      <header class="adm-head">
+        <div><h1>Painel Ripfire</h1><p id="admWho">Visão geral da loja</p></div>
+        <button type="button" id="refreshOrders" class="adm-refresh">↻ Atualizar</button>
+      </header>
+      <nav class="adm-tabs" role="tablist" aria-label="Seções do Admin">
+        <button type="button" role="tab" class="on" data-adm="dash">Painel</button>
+        <button type="button" role="tab" data-adm="orders">Pedidos</button>
+        <button type="button" role="tab" data-adm="customers">Clientes</button>
+        <button type="button" role="tab" data-adm="costs">Custos</button>
+        <button type="button" role="tab" data-adm="arts">Artes</button>
+        <button type="button" role="tab" data-adm="mockups">Mockups</button>
+        <button type="button" role="tab" data-adm="more">LGPD e backup</button>
+      </nav>
+
+      <!-- Painel -->
+      <section class="adm-pane" data-pane="dash">
+        <div class="adm-toolbar">
+          <div class="adm-seg" role="group" aria-label="Período">
+            <button type="button" data-days="7">7 dias</button><button type="button" data-days="30" class="on">30 dias</button>
+            <button type="button" data-days="90">90 dias</button><button type="button" data-days="365">12 meses</button>
+          </div>
+          <div class="adm-seg" role="group" aria-label="Agrupar por">
+            <button type="button" data-group="day" class="on">Dia</button><button type="button" data-group="week">Semana</button><button type="button" data-group="month">Mês</button>
+          </div>
+        </div>
+        <div id="dashCostsHint" class="adm-hint" hidden>Preencha a aba <b>Custos</b> para ver o custo e o lucro de verdade.</div>
+        <div id="dashCards" class="adm-cards"></div>
+        <div class="adm-two">
+          <div class="adm-card"><h3>Receita, custo e lucro</h3><div id="dashChartMoney" class="adm-chart"></div></div>
+          <div class="adm-card"><h3>Visitas e contas novas</h3><div id="dashChartPeople" class="adm-chart"></div></div>
+        </div>
+        <div class="adm-card"><h3>Produção agora</h3><div id="dashStages" class="adm-stages"></div></div>
+        <div class="adm-card"><h3>Por período</h3><div id="dashTable" class="adm-table-wrap"></div>
+          <p class="adm-note">Visitas: cada vez que alguém abre o site (sem cookies, robôs ficam de fora). Receita e custo contam só pedidos pagos.</p></div>
       </section>
 
-      <section class="panel">
-        <h2>Foto de mockup da camiseta</h2>
-        <p style="font-size:12px;color:var(--muted);margin:-8px 0 12px">Suba uma foto real do produto (sem estampa) pra cada modelo/cor. Quando existir, o editor usa a foto no lugar do desenho.</p>
-        <form id="mockupForm">
-          <label for="mockupModel">Modelo</label><select name="model_id" id="mockupModel"></select>
-          <label for="mockupColor">Cor</label><select name="color" id="mockupColor"></select>
-          <label for="mockupSide">Lado</label>
-          <select name="side" id="mockupSide">
-            <option value="FRONT">Frente</option>
-            <option value="BACK">Costas</option>
-          </select>
-          <label for="mockupPhoto">Foto</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
-          <div class="mockup-preview" id="mockupPreviewWrap" style="display:none">
-            <img id="mockupPreviewImg" alt="">
-            <div id="mockupPreviewBox">
-              <div id="mockupBoxResize" class="mockup-box-resize" title="Arraste para redimensionar"></div>
-            </div>
-          </div>
-          <small style="color:var(--muted)">Arraste o quadrado pra mover, ou o cantinho no canto inferior direito pra redimensionar.</small>
-          <div class="dims-row">
-            <div><label for="mockupX">Área X (%)</label><input name="print_x" id="mockupX" type="number" min="0" max="100" value="30" step="0.5"></div>
-            <div><label for="mockupY">Área Y (%)</label><input name="print_y" id="mockupY" type="number" min="0" max="100" value="28" step="0.5"></div>
-          </div>
-          <div class="dims-row">
-            <div><label for="mockupW">Largura (%)</label><input name="print_w" id="mockupW" type="number" min="1" max="100" value="40" step="0.5"></div>
-            <div><label for="mockupH">Altura (%)</label><input name="print_h" id="mockupH" type="number" min="1" max="100" value="45" step="0.5"></div>
-          </div>
-          <button class="primary full">Salvar mockup</button>
-        </form><div id="adminMockupStatus" role="status" aria-live="polite"></div>
-        <h2 style="margin-top:18px">Mockups cadastrados</h2>
-        <div id="mockupsList" class="gang-list"></div>
+      <!-- Pedidos -->
+      <section class="adm-pane" data-pane="orders" hidden>
+        <div class="adm-toolbar">
+          <input id="ordersSearch" class="adm-search" type="search" placeholder="Buscar por número, cliente ou e-mail" aria-label="Buscar pedido">
+          <div id="ordersFilters" class="adm-chips" role="group" aria-label="Filtrar por etapa"></div>
+        </div>
+        <div id="ordersTable" class="adm-table-wrap"></div>
       </section>
 
-      <section class="panel">
-        <h2>Biblioteca digital</h2>
-        <p style="font-size:12px;color:var(--muted);margin:-8px 0 12px">Os lados Grátis e Premium são fixos e já vêm com 8 pastas cada. Renomeie as pastas, crie outras e envie as artes. Elas aparecem na aba Artes digitais.</p>
-        <form id="libCategoryForm">
-          <label for="libCatName">Nova pasta</label><input id="libCatName" placeholder="Ex.: Academia" required>
-          <label for="libParent">Lado</label><select id="libParent"><option value="free">Grátis</option><option value="premium">Premium</option></select>
-          <button class="primary full" style="margin-top:12px">Criar pasta</button>
-        </form><div id="libCatStatus" role="status" aria-live="polite"></div>
-        <form id="libUploadForm" style="margin-top:18px">
-          <label for="libTarget">Enviar artes para</label><select id="libTarget"></select>
-          <label for="libFiles">Artes (pode escolher várias de uma vez)</label><input id="libFiles" type="file" multiple accept="image/png,image/jpeg,image/webp">
-          <button id="libUploadBtn" class="primary full" style="margin-top:12px">Enviar artes</button>
-        </form><div id="libUploadStatus" role="status" aria-live="polite"></div>
-        <h2 style="margin-top:18px">Pastas</h2>
-        <div id="libTree" class="lib-tree"></div>
+      <!-- Clientes -->
+      <section class="adm-pane" data-pane="customers" hidden>
+        <div class="adm-toolbar"><input id="customersSearch" class="adm-search" type="search" placeholder="Buscar por nome, e-mail ou telefone" aria-label="Buscar cliente">
+          <span id="customersCount" class="adm-count"></span></div>
+        <div id="customersTable" class="adm-table-wrap"></div>
       </section>
 
-      <section class="panel">
-        <h2>Backup dos dados</h2>
-        <p id="backupInfo" class="small-note">Contas, pedidos e solicitações LGPD são copiados sozinhos.</p>
-        <button type="button" id="backupNow" class="primary full">Fazer backup agora</button>
-        <div id="backupStatus" role="status" aria-live="polite"></div>
-        <div id="backupList" class="gang-list" style="margin-top:12px"></div>
+      <!-- Custos -->
+      <section class="adm-pane" data-pane="costs" hidden>
+        <form id="costsForm" class="adm-card adm-costs">
+          <h3>Quanto custa produzir</h3>
+          <p class="adm-note">Com esses valores o painel calcula o custo e o lucro de cada pedido pago.</p>
+          <div class="adm-cost-grid">
+            <label><span>Impressão DTF por metro de rolo</span><div class="adm-money"><i>R$</i><input name="dtf_per_meter" type="number" min="0" step="0.01"></div><small>Filme, tinta e pó de 1 metro (rolo de <b id="costsRoll"></b> cm).</small></label>
+            <label><span>Prensagem por camiseta</span><div class="adm-money"><i>R$</i><input name="press_per_piece" type="number" min="0" step="0.01"></div><small>Mão de obra e energia de cada peça prensada.</small></label>
+            <label><span>Embalagem e outros por pedido</span><div class="adm-money"><i>R$</i><input name="packaging_per_order" type="number" min="0" step="0.01"></div><small>Saco, etiqueta, brinde... (um por pedido).</small></label>
+            <label><span>Taxa do pagamento</span><div class="adm-money"><input name="payment_fee_pct" type="number" min="0" max="100" step="0.01"><i>%</i></div><small>Ex.: taxa do Mercado Pago sobre o valor.</small></label>
+          </div>
+          <h3 style="margin-top:22px">Valor bruto da camiseta lisa</h3>
+          <div id="costsShirts" class="adm-cost-grid"></div>
+          <button type="submit" class="primary">Salvar custos</button>
+          <div id="costsStatus" role="status" aria-live="polite"></div>
+        </form>
+        <div class="adm-card"><h3>Como o cálculo é feito</h3>
+          <ul class="adm-list">
+            <li><b>Somente DTF:</b> metros da chapa × custo do metro.</li>
+            <li><b>Camiseta pronta:</b> por peça, camiseta lisa do modelo + prensagem + DTF pela área das artes (área ÷ largura do rolo × custo do metro).</li>
+            <li><b>Todos:</b> + embalagem por pedido + taxa do pagamento sobre o total.</li>
+            <li><b>Premium:</b> só a taxa do pagamento.</li>
+          </ul></div>
       </section>
-      </div>
-      <section class="panel wide"><div class="section-head compact"><h2>Pedidos</h2><button id="refreshOrders">Atualizar</button></div><div id="ordersTable"></div>
-        <div class="section-head compact lgpd-head"><h2>Solicitações LGPD</h2><button id="refreshLgpd">Atualizar</button></div>
-        <p class="small-note">Pedidos feitos pelo formulário /lgpd. Prazo de resposta: 15 dias.</p>
-        <div id="lgpdTable"></div>
-        <div class="section-head compact lgpd-head"><h2>Métricas</h2>
-          <select id="metricsDays" style="width:auto" aria-label="Período das métricas"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="90">90 dias</option></select></div>
-        <p class="small-note">Contagem própria e anônima (sem cookies): inclui quem recusou o Google Analytics e a Meta. Robôs conhecidos ficam de fora.</p>
-        <div id="metricsBox"></div></section>
+
+      <!-- Artes (biblioteca) -->
+      <section class="adm-pane" data-pane="arts" hidden>
+        <div class="adm-lib">
+          <aside class="adm-card adm-lib-side">
+            <h3>Pastas</h3>
+            <div id="libTree" class="adm-lib-tree"></div>
+            <form id="libCategoryForm" class="adm-lib-new">
+              <label for="libCatName">Nova pasta</label>
+              <div class="adm-inline"><input id="libCatName" placeholder="Ex.: Academia" required>
+                <select id="libParent" aria-label="Lado"><option value="free">Grátis</option><option value="premium">Premium</option></select></div>
+              <button class="primary full">Criar pasta</button>
+            </form><div id="libCatStatus" role="status" aria-live="polite"></div>
+          </aside>
+          <div class="adm-card adm-lib-main">
+            <div id="libFolderHead" class="adm-lib-head"></div>
+            <form id="libUploadForm" class="adm-drop">
+              <input id="libFiles" type="file" multiple accept="image/png,image/jpeg,image/webp" aria-label="Escolher artes">
+              <select id="libTarget" hidden aria-hidden="true"></select>
+              <div><span class="gang-drop-icon" aria-hidden="true">⬆</span><b>Clique ou arraste as artes aqui</b><small>PNG, JPG ou WEBP · pode mandar várias de uma vez · o nome do arquivo vira o nome da arte</small></div>
+              <button id="libUploadBtn" hidden>Enviar</button>
+            </form><div id="libUploadStatus" role="status" aria-live="polite"></div>
+            <div id="libAdminArts" class="adm-lib-arts"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Mockups -->
+      <section class="adm-pane" data-pane="mockups" hidden>
+        <div class="adm-card">
+          <div class="adm-card-head"><h3>Fotos das camisetas</h3>
+            <button type="button" id="mockupToggle" class="adm-btn" aria-expanded="false" aria-controls="mockupFormWrap">+ Adicionar ou trocar foto</button></div>
+          <p class="adm-note">O editor usa a foto de cada modelo, cor e lado. Subir de novo a mesma combinação troca a foto.</p>
+          <div id="mockupFormWrap" class="adm-mockup-form" hidden>
+            <form id="mockupForm">
+              <div class="adm-inline3">
+                <label><span>Modelo</span><select name="model_id" id="mockupModel"></select></label>
+                <label><span>Cor</span><select name="color" id="mockupColor"></select></label>
+                <label><span>Lado</span><select name="side" id="mockupSide"><option value="FRONT">Frente</option><option value="BACK">Costas</option></select></label>
+              </div>
+              <label for="mockupPhoto" class="adm-label">Foto (sem estampa)</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
+              <div class="mockup-preview" id="mockupPreviewWrap" style="display:none">
+                <img id="mockupPreviewImg" alt="">
+                <div id="mockupPreviewBox"><div id="mockupBoxResize" class="mockup-box-resize" title="Arraste para redimensionar"></div></div>
+              </div>
+              <small class="adm-note">Arraste o quadrado pra posicionar a área de impressão, ou o cantinho pra mudar o tamanho.</small>
+              <div class="adm-inline4">
+                <label><span>X (%)</span><input name="print_x" id="mockupX" type="number" min="0" max="100" value="30" step="0.5"></label>
+                <label><span>Y (%)</span><input name="print_y" id="mockupY" type="number" min="0" max="100" value="28" step="0.5"></label>
+                <label><span>Largura (%)</span><input name="print_w" id="mockupW" type="number" min="1" max="100" value="40" step="0.5"></label>
+                <label><span>Altura (%)</span><input name="print_h" id="mockupH" type="number" min="1" max="100" value="45" step="0.5"></label>
+              </div>
+              <button class="primary">Salvar foto</button>
+            </form><div id="adminMockupStatus" role="status" aria-live="polite"></div>
+          </div>
+          <div id="mockupsList" class="adm-mockups"></div>
+        </div>
+      </section>
+
+      <!-- LGPD e backup -->
+      <section class="adm-pane" data-pane="more" hidden>
+        <div class="adm-card"><div class="adm-card-head"><h3>Solicitações LGPD</h3><button id="refreshLgpd" class="adm-btn">Atualizar</button></div>
+          <p class="adm-note">Pedidos feitos pelo formulário /lgpd. Prazo de resposta: 15 dias.</p>
+          <div id="lgpdTable" class="adm-table-wrap"></div></div>
+        <div class="adm-card"><h3>Backup dos dados</h3>
+          <p id="backupInfo" class="adm-note">Contas, pedidos e solicitações LGPD são copiados sozinhos.</p>
+          <button type="button" id="backupNow" class="adm-btn">Fazer backup agora</button>
+          <div id="backupStatus" role="status" aria-live="polite"></div>
+          <div id="backupList" class="gang-list" style="margin-top:12px"></div></div>
+      </section>
     </div>
   </section>
 </main>
@@ -482,6 +548,6 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=53"></script>
+<script src="/static/app.js?v=55"></script>
 </body>
 </html>
