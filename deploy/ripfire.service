@@ -1,0 +1,17 @@
+# Serviço do Ripfire Studio na VPS (systemd): sobe junto com o servidor e
+# reinicia sozinho se cair. Instalação no DEPLOY.md, passo 4.
+[Unit]
+Description=Ripfire Studio
+After=network.target
+
+[Service]
+User=ripfire
+Group=ripfire
+WorkingDirectory=/opt/ripfire
+ExecStart=/opt/ripfire/.venv/bin/python app.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,153 +1,75 @@
-# Ripfire Studio Local v1
+# Ripfire Studio
 
-Projeto local para abrir no VSCode e testar a ideia do novo site antes de hospedar na internet.
+Loja online de camisetas personalizadas e impressão DTF: o cliente monta a
+estampa no editor, paga pelo Mercado Pago e os arquivos de produção ficam
+prontos para o RIP.
 
-## Funcionalidades desta versão
+- **Backend:** Python + FastAPI, banco SQLite (`app.py`)
+- **Frontend:** HTML, CSS e JavaScript sem framework (`static/`)
 
-- 3 modalidades de venda:
-  - Somente DTF
-  - DTF + camiseta lisa
-  - Camiseta pronta/prensada
-- Editor visual:
-  - upload de PNG/JPG/WEBP
-  - mover
-  - redimensionar
-  - girar
-  - centralizar
-  - adicionar texto
-- Catálogo próprio de artes Ripfire
-- Cadastro de artes no Admin
-- Loja de artes digitais
-- Quantidade de DTF
-- Quantidade por tamanho de camiseta
-- Modelo e cor da camiseta
-- Cálculo de preço de teste
-- Exportação da arte em PNG de produção a 300 DPI
-- Pasta automática por pedido
-- `pedido.json` com os dados do pedido
-- Banco SQLite
-- Painel administrativo de pedidos
-- Mudança de status: NOVO / APROVADO / PRODUCAO / CONCLUIDO / CANCELADO
-- Geração opcional de imagem por IA
+## Rodar no PC
 
-## Como rodar no Windows / VSCode
+Dê dois cliques em `start.bat`. Ele cria o ambiente Python, instala as
+dependências e abre `http://127.0.0.1:8787`. O Admin fica em
+`http://127.0.0.1:8787/#admin`.
 
-### 1. Instale Python
+Antes da primeira vez:
 
-Use Python 3.11 ou 3.12 e marque `Add Python to PATH` durante a instalação.
+1. Copie `config.example.json` para `config.json` e troque as senhas de
+   admin (`admin_key` e `admins`) pelo hash gerado com
+   `.venv\Scripts\python app.py --hash-senha` (a senha não fica legível no arquivo).
+2. (Opcional) Copie `.env.example` para `.env` para ligar IA, login com
+   Google, Mercado Pago e métricas. Cada linha do arquivo explica onde pegar
+   a chave; vazio = desligado.
 
-### 2. Abra esta pasta no VSCode
+Para publicar numa VPS com domínio e HTTPS, siga o [DEPLOY.md](DEPLOY.md).
 
-`File > Open Folder` e selecione `ripfire_studio_local_v1`.
+## O que o site faz
 
-### 3. Jeito mais fácil
+- **Editor de camiseta:** frente e verso (mangas desligadas por enquanto: `SLEEVES_ENABLED` no `app.py`), com upload, artes da
+  biblioteca ou geradas por IA; limite de área por tamanho; foto de posição
+  para quem estampa.
+- **Somente DTF:** monta a chapa (gang sheet) com encaixe automático e cobra
+  por metro.
+- **Biblioteca de artes:** lado Grátis (com conta) e Premium (assinatura
+  manual de 30 dias, sem renovação automática).
+- **Conta do cliente:** cadastro por e-mail ou Google, pedidos com etapas,
+  downloads, dados pessoais, cópia dos dados e exclusão da conta.
+- **Pagamento:** Mercado Pago (Pix, cartão, boleto). Pedido não pago é
+  cancelado em 24 h; o pagamento aprovado libera a produção sozinho.
+- **Admin:** pedidos (com **BAIXAR ZIP** dos arquivos de produção), artes,
+  mockups, biblioteca, solicitações LGPD e métricas próprias.
+- **Privacidade:** aviso de cookies com consentimento por categoria,
+  GA4 / Pixel da Meta / Google Tag Manager só com aceite, formulário LGPD,
+  contagem de visitas anônima.
+- **Senhas:** só o hash fica guardado (PBKDF2-SHA256, 600 mil iterações, sal aleatório),
+  inclusive as do Admin no `config.json`; mínimo de 8 caracteres. Depois de
+  **5 senhas erradas** (por IP e por conta) o acesso fica bloqueado 15 minutos
+  (`"login"` no `config.json`).
+- **Rotas da API fechadas por padrão:** toda rota exige login de cliente ou de
+  Admin, menos as da lista `PUBLIC_ROUTES` no `app.py`. Rota nova sem proteção
+  e fora da lista impede o servidor de iniciar (e diz qual é).
+- **Acessibilidade:** WCAG 2.1 AA, inclusive o editor pelo teclado.
 
-Execute `start.bat`.
+## Arquivos
 
-Ele cria `.venv`, instala as dependências, inicia o servidor e abre:
+| Caminho | O que é |
+|---|---|
+| `app.py` | Servidor: rotas, banco, pagamento, LGPD, métricas |
+| `static/index.html`, `app.js`, `styles.css` | O site (uma página só, com abas) |
+| `static/privacidade.html`, `termos.html`, `reembolso.html`, `lgpd.html` | Páginas legais e formulário LGPD |
+| `static/fonts/` | Fontes servidas pelo próprio site (sem Google Fonts) |
+| `config.json` | Preços, modelos, tamanhos, senhas do admin (não vai pro Git) |
+| `.env` | Chaves de serviços externos (não vai pro Git) |
+| `data/` | Banco `studio.db` e a biblioteca de artes |
+| `orders/` | Uma pasta por pedido, com as artes e o `pedido.json` |
+| `PRODUCAO_PAGA/`, `SomenteDTFs/` | Cópias para a produção depois do pagamento |
+| `media/` | Artes do catálogo, mockups e imagens geradas por IA |
+| `deploy/` | Serviço, nginx e backup diário para a VPS |
+| `docs/historico/` | Anotações de versões antigas (só para consulta) |
 
-`http://127.0.0.1:8787`
+## Antes de abrir para clientes
 
-### 4. Pelo terminal do VSCode
-
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
-```
-
-## Primeiro teste
-
-1. Abra a aba `Admin`.
-2. Cadastre algumas artes PNG.
-3. Abra `Personalizar`.
-4. Escolha Somente DTF, DTF + camiseta ou Camiseta pronta.
-5. Escolha uma arte cadastrada ou envie um arquivo.
-6. Arraste, redimensione e gire.
-7. Defina quantidade e tamanho.
-8. Preencha o nome do cliente.
-9. Clique em `Criar pedido de teste`.
-10. Confira a pasta `orders/`.
-
-Exemplo:
-
-```text
-orders/
-└── 260829-0001__JOAO_SILVA/
-    ├── ARTE_PRODUCAO.png
-    └── pedido.json
-```
-
-## Artes digitais
-
-Cadastre uma arte no Admin e marque `Vender arquivo digital`.
-Ela aparecerá na aba `Artes digitais`.
-
-Ao gerar um pedido digital, o sistema cria uma pasta contendo uma cópia do arquivo original.
-
-## Configurar preços e produtos
-
-Edite `config.json`.
-
-Você pode alterar:
-
-- modelos de camiseta
-- cores
-- tamanhos
-- preço do DTF
-- preço da camiseta
-- valor da prensagem
-- largura máxima
-- DPI
-
-Os preços atuais são apenas valores de demonstração.
-
-## Ativar IA
-
-A IA é opcional. O restante do sistema funciona sem ela.
-
-1. Copie `.env.example` para `.env`.
-2. Informe sua chave:
-
-```env
-OPENAI_API_KEY=sua_chave
-OPENAI_IMAGE_MODEL=gpt-image-2
-```
-
-3. Reinicie o programa.
-
-A chave fica somente no Python no seu PC, não no navegador.
-
-O modelo padrão configurado é `gpt-image-2`.
-
-## Importante: pagamentos
-
-Esta v1 NÃO cobra Pix/cartão. Ela simula o checkout e cria o pedido no PC.
-
-O objetivo desta etapa é validar:
-
-- editor
-- catálogo
-- produtos
-- quantidades
-- arquivo de produção
-- organização dos pedidos
-- experiência do cliente
-
-Depois podemos integrar pagamento, frete e o agente que envia os pedidos ao Flexi.
-
-## Próxima versão sugerida
-
-- frente e costas
-- remoção de fundo
-- mockup mais realista
-- carrinho
-- Pix/cartão
-- login do cliente
-- download digital após pagamento
-- licença pessoal/comercial
-- integração com o domínio Ripfire
-- sincronização nuvem → PC
-- painel de produção
-- integração com Flexi Production Manager
+Veja a lista no fim do [DEPLOY.md](DEPLOY.md): credencial de produção do
+Mercado Pago, senhas fortes, dados da empresa nas páginas legais (campos
+entre colchetes), número do WhatsApp e um pedido de teste completo.

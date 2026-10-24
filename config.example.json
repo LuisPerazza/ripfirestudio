@@ -18,6 +18,12 @@
       "id": "babylook",
       "name": "Baby Look",
       "base_price": 26.9
+    },
+    {
+      "id": "infantil",
+      "name": "Infantil",
+      "base_price": 19.9,
+      "sizes": ["2", "4", "6", "8", "10", "12", "14", "16"]
     }
   ],
   "shirt_colors": [
@@ -41,18 +47,81 @@
     "finished_press_unit": 7.0,
     "digital_license_default": 9.9,
     "dtf_gang_sheet_tiers": [
-      {"up_to_m": 1, "price_per_m": 49.9},
-      {"up_to_m": 3, "price_per_m": 44.9},
-      {"up_to_m": 999, "price_per_m": 39.9}
+      {
+        "up_to_m": 1,
+        "price_per_m": 49.9
+      },
+      {
+        "up_to_m": 3,
+        "price_per_m": 44.9
+      },
+      {
+        "up_to_m": 999,
+        "price_per_m": 39.9
+      }
     ]
   },
   "dtf_sheet_width_cm": 58.5,
   "dtf_sheet_min_height_cm": 200,
+  "max_upload_mb": 600,
+  "ai_daily_limit": 20,
+  "unpaid_cancel_hours": 24,
+  "login": { "max_attempts": 5, "lock_minutes": 15 },
+  "backup": { "every_hours": 24, "keep_days": 14, "folder": "./backups" },
   "production_drop_folder": "./PRODUCAO_PAGA",
   "payment": {
     "mode": "test",
     "webhook_secret": "TROQUE-ESTA-CHAVE"
   },
   "admin_key": "TROQUE-ESTA-CHAVE-ADMIN",
-  "admin_user": "TROQUE-ESTE-USUARIO"
+  "admin_user": "TROQUE-ESTE-USUARIO",
+  "admins": [
+    { "user": "TROQUE-ESTE-USUARIO-2", "key": "TROQUE-ESTA-CHAVE-ADMIN-2" }
+  ],
+  "digital_arts": {
+    "premium_price_month": 29.9,
+    "premium_days": 30
+  },
+  "size_print_limits": {
+    "P": {
+      "w": 26,
+      "h": 34
+    },
+    "M": {
+      "w": 28,
+      "h": 36
+    },
+    "G": {
+      "w": 30,
+      "h": 38
+    },
+    "GG": {
+      "w": 32,
+      "h": 40
+    },
+    "G1": {
+      "w": 34,
+      "h": 42
+    },
+    "G2": {
+      "w": 36,
+      "h": 44
+    },
+    "G3": {
+      "w": 38,
+      "h": 46
+    },
+    "G4": {
+      "w": 40,
+      "h": 48
+    },
+    "2": { "w": 18, "h": 24 },
+    "4": { "w": 19, "h": 26 },
+    "6": { "w": 20, "h": 28 },
+    "8": { "w": 21, "h": 29 },
+    "10": { "w": 23, "h": 30 },
+    "12": { "w": 23, "h": 31 },
+    "14": { "w": 25, "h": 32 },
+    "16": { "w": 26, "h": 33 }
+  }
 }

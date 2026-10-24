@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "cli-setup": {
+      "source": "diegosouzapw/omniroute",
+      "sourceType": "github",
+      "skillPath": "skills/cli-setup/SKILL.md",
+      "computedHash": "e38d0afff5e743cf42b861f044f692c5b8fc7fa6ee42ab3965712d1bd144e2c7"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "b146008599c31057cef1c145774cea5d5afb30e8f43fa802e47a4b461419aaaf"
+    },
+    "git-guardrails-claude-code": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/misc/git-guardrails-claude-code/SKILL.md",
+      "computedHash": "fa22f1aa2708d95cc3149640f33e085381b184a0322609930f7971c1dca11835"
+    },
+    "graphify": {
+      "source": "graphify-labs/graphify",
+      "sourceType": "github",
+      "skillPath": "graphify/SKILL.md",
+      "computedHash": "007f4b01fc70a45cdf2d31a3478ad3603e218f74a0505eaf34ccc581d11b8516"
+    },
+    "omni-combos-routing": {
+      "source": "diegosouzapw/omniroute",
+      "sourceType": "github",
+      "skillPath": "skills/omni-combos-routing/SKILL.md",
+      "computedHash": "d36eb5bea0c4a00e03c5b14c6d39c24b748b08b75186386d08b9eace7077587e"
+    },
+    "ponytail": {
+      "source": "dietrichgebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail/SKILL.md",
+      "computedHash": "dc44b17f49b1228761af8303a51bc028cd1cca866ba8d23d6072ef5fd4e0ba94"
+    }
+  }
+}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Seus dados (LGPD) · Ripfire Studio</title>
+  <link rel="icon" type="image/png" href="/static/img/logo.png">
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
+  <style>
+    :root{--bg:#f5f5f5;--paper:#fff;--ink:#181818;--muted:#6b6b6b;--line:#e2e2e2;--accent:#9b59b6;--dark:#050505}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:'Open Sans',Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
+    header{background:var(--dark);padding:18px 24px}
+    header a{display:inline-block}
+    header img{height:52px;display:block}
+    main{max-width:820px;margin:32px auto;padding:36px 40px;background:var(--paper);border:1px solid var(--line);border-radius:14px}
+    h1,h2{font-family:'Barlow',Arial,sans-serif}
+    h1{font-size:38px;margin:0 0 4px;text-transform:uppercase;letter-spacing:-1px}
+    h2{font-size:21px;margin:34px 0 8px}
+    .updated{color:var(--muted);font-size:14px;margin:0 0 24px}
+    a{color:var(--accent)}
+    .back{display:inline-block;margin-top:28px;font-weight:700}
+    th,td{border-bottom:1px solid var(--line);padding:9px 8px;text-align:left;vertical-align:top}
+    table{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0}
+    th{background:#faf7fc}
+    .note{background:#faf7fc;border-left:4px solid var(--accent);padding:12px 16px;border-radius:6px;font-size:15px}
+    label{display:block;font-weight:700;font-size:14px;margin:16px 0 6px}
+    input,select,textarea{width:100%;font:inherit;border:1px solid #d7d7d2;border-radius:8px;padding:11px;background:#fff}
+    textarea{min-height:120px;resize:vertical}
+    .check{display:flex;gap:10px;align-items:flex-start;font-weight:400}
+    .check input{width:auto;margin-top:5px}
+    button{margin-top:20px;width:100%;border:0;border-radius:9px;padding:14px;background:var(--accent);color:#fff;font-family:Barlow,Arial,sans-serif;font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer}
+    button[disabled]{opacity:.6;cursor:wait}
+    .msg{margin-top:14px;font-weight:700}.msg.ok{color:#087a3d}.msg.err{color:#b11}
+    .shortcuts{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin:18px 0}
+    .shortcuts div{border:1px solid var(--line);border-radius:10px;padding:14px;font-size:14px}
+    @media (max-width:640px){main{margin:0;border-radius:0;border:0;padding:24px 16px}h1{font-size:30px}}
+  </style>
+</head>
+<body>
+<header><a href="/"><img src="/static/img/logo.png" alt="Ripfire Studio"></a></header>
+<main>
+  <h1>Seus dados (LGPD)</h1>
+  <p class="updated">Atendimento aos direitos do titular · Lei nº 13.709/2018, art. 18</p>
+
+  <p>Use este formulário para exercer qualquer direito sobre os seus dados pessoais. Respondemos em até <b>15 dias</b>, no e-mail informado. Detalhes sobre o que coletamos estão na <a href="/privacidade">Política de Privacidade</a>.</p>
+
+  <div class="shortcuts">
+    <div><b>Tem conta?</b> Em <i>Minha conta → Meus dados</i> você corrige seus dados, baixa uma cópia de tudo e exclui a conta na hora, sem esperar.</div>
+    <div><b>Cookies</b>: mude sua escolha no link “Preferências de cookies”, no rodapé do site.</div>
+  </div>
+
+  <form id="lgpdForm" novalidate>
+    <label for="kind">O que você quer?</label>
+    <select id="kind" required>
+      <option value="">Escolha…</option>
+      <option value="ACESSO">Confirmar e acessar meus dados</option>
+      <option value="CORRECAO">Corrigir dados</option>
+      <option value="EXCLUSAO">Excluir meus dados</option>
+      <option value="PORTABILIDADE">Portabilidade dos dados</option>
+      <option value="COMPARTILHAMENTO">Saber com quem meus dados são compartilhados</option>
+      <option value="REVOGACAO">Revogar consentimento</option>
+      <option value="OPOSICAO">Oposição a um tratamento</option>
+      <option value="OUTRO">Outro assunto de privacidade</option>
+    </select>
+
+    <label for="name">Nome completo</label>
+    <input id="name" autocomplete="name" required>
+
+    <label for="email">E-mail da sua conta (ou o que você usou nos pedidos)</label>
+    <input id="email" type="email" autocomplete="email" required>
+
+    <label for="document">CPF ou CNPJ (opcional, ajuda a confirmar que é você)</label>
+    <input id="document" inputmode="numeric" maxlength="18">
+
+    <label for="message">Detalhes</label>
+    <textarea id="message" maxlength="3000" placeholder="Ex.: quero corrigir meu endereço; quero receber as artes do pedido 261023-0004…"></textarea>
+
+    <label class="check"><input type="checkbox" id="holder"> Declaro que sou o titular dos dados ou seu representante legal. Para proteger você, podemos pedir uma confirmação de identidade antes de atender.</label>
+
+    <button type="submit" id="send">Enviar solicitação</button>
+    <div id="msg" class="msg" role="status"></div>
+  </form>
+
+  <a class="back" href="/">← Voltar ao site</a>
+</main>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  let customer = null;
+  try { customer = JSON.parse(localStorage.getItem('ripfire_customer') || 'null'); } catch {}
+  // Logado: já preenche e vincula a solicitação à conta.
+  if (customer) { $('#name').value = customer.full_name || ''; $('#email').value = customer.email || ''; }
+  const show = (text, ok) => { $('#msg').textContent = text; $('#msg').className = 'msg ' + (ok ? 'ok' : 'err'); };
+  $('#lgpdForm').onsubmit = async ev => {
+    ev.preventDefault();
+    if (!$('#kind').value) return show('Escolha o tipo de solicitação.', false);
+    if (!$('#name').value.trim() || !$('#email').value.trim()) return show('Preencha nome e e-mail.', false);
+    if (!$('#holder').checked) return show('Confirme que você é o titular ou representante legal.', false);
+    $('#send').disabled = true;
+    try {
+      const r = await fetch('/api/lgpd/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Customer-Token': customer?.token || '' },
+        body: JSON.stringify({ kind: $('#kind').value, name: $('#name').value, email: $('#email').value,
+                               document: $('#document').value, message: $('#message').value })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || 'Não foi possível enviar agora.');
+      $('#lgpdForm').reset();
+      show(`Solicitação recebida. Protocolo ${d.protocol}. Guarde esse número: respondemos em até ${d.deadline_days} dias no e-mail informado.`, true);
+    } catch (e) { show(e.message, false); }
+    finally { $('#send').disabled = false; }
+  };
+})();
+</script>
+<!-- Contagem anônima (sem cookie): dia, página, +1. -->
+<script>try{fetch('/api/metrics/hit',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({page:'lgpd'})}).catch(()=>{})}catch(e){}</script>
+</body>
+</html>

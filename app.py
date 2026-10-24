@@ -2,25 +2,46 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import shutil
 import sqlite3
+import struct
+import sys
+import tempfile
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
+import zipfile
+import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
+
+# O limite padrão do Pillow (~179 Mpx) recusava chapas de DTF acima de
+# ~2,2 m, e sem a medida da chapa o pedido não tem preço. Aqui só lemos o
+# cabeçalho das imagens (image_info), nunca decodificamos os pixels. O Pillow
+# só recusa acima do dobro deste valor (800 Mpx), bem acima do maior canvas
+# que o navegador gera (~6.900 × 32.767 px ≈ 226 Mpx).
+Image.MAX_IMAGE_PIXELS = 400_000_000
 
 CONFIG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
 DB_PATH = BASE / "data" / "studio.db"
@@ -29,19 +50,40 @@ GENERATED_DIR = BASE / "media" / "generated"
 MOCKUPS_DIR = BASE / "media" / "mockups"
 ORDERS_DIR = BASE / "orders"
 SOMENTE_DTF_DIR = BASE / "SomenteDTFs"
+# Cópias reduzidas das artes digitais (miniaturas e a versão de trabalho das
+# premium). Fica em data/, fora de /media: nada aqui é servido direto.
+DIGITAL_CACHE_DIR = BASE / "data" / "digital_cache"
+# Originais da biblioteca de artes digitais: só saem pela rota com login.
+LIBRARY_DIR = BASE / "data" / "digital_library"
+# Os dois lados fixos da biblioteca (o id é também o acesso das pastas de dentro).
+LIBRARY_SIDES = {"free": "Artes Grátis", "premium": "Artes Premium"}
 
-PRODUCTION_DROP = Path(CONFIG.get("production_drop_folder", "./PRODUCAO_PAGA"))
-if not PRODUCTION_DROP.is_absolute():
-    PRODUCTION_DROP = (BASE / PRODUCTION_DROP).resolve()
+_production_drop = Path(CONFIG.get("production_drop_folder", "./PRODUCAO_PAGA"))
+PRODUCTION_DROP = (
+    _production_drop if _production_drop.is_absolute() else (BASE / _production_drop).resolve()
+)
 
-for p in (DB_PATH.parent, ARTWORKS_DIR, GENERATED_DIR, MOCKUPS_DIR, ORDERS_DIR, SOMENTE_DTF_DIR, PRODUCTION_DROP):
+# Backups automáticos do banco (ver "Backup dos dados" mais abaixo).
+BACKUP_CFG: dict[str, Any] = CONFIG.get("backup") or {}
+_backup_dir = Path(BACKUP_CFG.get("folder") or "./backups")
+BACKUP_DIR = _backup_dir if _backup_dir.is_absolute() else (BASE / _backup_dir).resolve()
+
+for p in (DB_PATH.parent, BACKUP_DIR, ARTWORKS_DIR, GENERATED_DIR, MOCKUPS_DIR, ORDERS_DIR, SOMENTE_DTF_DIR, PRODUCTION_DROP, DIGITAL_CACHE_DIR, LIBRARY_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
 
-def db():
+@contextmanager
+def db() -> Iterator[sqlite3.Connection]:
+    """Uso: `with db() as con:`. Grava (commit) se der certo, desfaz se der
+    erro e sempre fecha a conexão. O `with` direto do sqlite3 só faz o commit
+    e deixava a conexão aberta até o coletor de lixo passar."""
     con = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     con.row_factory = sqlite3.Row
-    return con
+    try:
+        with con:
+            yield con
+    finally:
+        con.close()
 
 
 def init_db():
@@ -105,6 +147,57 @@ def init_db():
             document TEXT NOT NULL DEFAULT '',
             google_sub TEXT UNIQUE
         );
+
+        CREATE TABLE IF NOT EXISTS customer_sessions (
+            token TEXT PRIMARY KEY,
+            customer_id TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS library_categories (
+            id TEXT PRIMARY KEY,
+            created_at REAL NOT NULL,
+            name TEXT NOT NULL,
+            parent_id TEXT,
+            access TEXT NOT NULL DEFAULT 'free'
+        );
+
+        CREATE TABLE IF NOT EXISTS library_arts (
+            id TEXT PRIMARY KEY,
+            created_at REAL NOT NULL,
+            category_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            file_path TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS page_hits (
+            day TEXT NOT NULL,
+            page TEXT NOT NULL,
+            hits INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, page)
+        );
+
+        CREATE TABLE IF NOT EXISTS privacy_requests (
+            id TEXT PRIMARY KEY,
+            protocol TEXT UNIQUE NOT NULL,
+            created_at REAL NOT NULL,
+            customer_id TEXT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            document TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'ABERTO',
+            answered_at REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS digital_downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at REAL NOT NULL,
+            customer_id TEXT NOT NULL,
+            art_id TEXT NOT NULL,
+            art_name TEXT NOT NULL
+        );
         """)
 
         customer_cols = {r["name"] for r in con.execute("PRAGMA table_info(customers)").fetchall()}
@@ -131,132 +224,67 @@ def init_db():
                 SELECT id,created_at,email,password_hash,full_name,phone,cep,address_number,document FROM customers_old;
             DROP TABLE customers_old;
             """)
+        customer_cols = {r["name"] for r in con.execute("PRAGMA table_info(customers)").fetchall()}
+        if "premium_until" not in customer_cols:
+            # Fim do acesso premium (timestamp); 0 = nunca assinou.
+            con.execute("ALTER TABLE customers ADD COLUMN premium_until REAL NOT NULL DEFAULT 0")
+        if "terms_accepted_at" not in customer_cols:
+            # Quando aceitou Termos e Política (LGPD: a loja precisa provar o aceite).
+            # 0 = conta de antes desse registro.
+            con.execute("ALTER TABLE customers ADD COLUMN terms_accepted_at REAL NOT NULL DEFAULT 0")
 
-        cols = {r["name"] for r in con.execute("PRAGMA table_info(orders)").fetchall()}
+        cols ={r["name"] for r in con.execute("PRAGMA table_info(orders)").fetchall()}
         if "payment_status" not in cols:
             con.execute("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'PENDING'")
         if "production_drop_path" not in cols:
             con.execute("ALTER TABLE orders ADD COLUMN production_drop_path TEXT")
+        if "customer_id" not in cols:
+            # Pedidos antigos ficam sem dono e entram em "Minha conta" pelo e-mail.
+            con.execute("ALTER TABLE orders ADD COLUMN customer_id TEXT")
+        if "payment_ref" not in cols:
+            # Id do pagamento no Mercado Pago: é por ele que se acha a venda no painel de lá.
+            con.execute("ALTER TABLE orders ADD COLUMN payment_ref TEXT")
 
         mockup_cols = {r["name"] for r in con.execute("PRAGMA table_info(shirt_mockups)").fetchall()}
         if "side" not in mockup_cols:
             con.execute("ALTER TABLE shirt_mockups ADD COLUMN side TEXT NOT NULL DEFAULT 'FRONT'")
 
-
-SEED_DIR = BASE / "media" / "mockups" / "seed"
-# Fotos reais enviadas pelo lojista (frente/costas) — cadastradas
-# automaticamente na cor "Preto" se ainda não existir um mockup pra
-# aquela combinação modelo+cor+lado. Rodar de novo não duplica nem
-# sobrescreve um mockup que o Admin já tenha customizado via upload.
-# Área de impressão medida direto no contorno real de cada foto (canal
-# alfa, varredura coluna a coluna): encontra onde a manga "termina" e o
-# painel do tronco começa, o ponto mais baixo do ombro/gola dentro
-# desse painel e a barra — daí aplica ~1,5cm de margem (em px, usando a
-# largura real estimada de cada modelo) pras 4 bordas. Fica só dentro
-# do tronco, nunca em cima de manga/ombro. Confirmado visualmente contra
-# as fotos de referência que o lojista mandou.
-PRINT_AREA_BY_MODEL_SIDE = {
-    ("regular", "FRONT"): (23.0, 18.8, 53.8, 68.8),
-    ("regular", "BACK"): (23.0, 15.7, 53.8, 74.7),
-    ("oversized", "FRONT"): (22.8, 17.3, 54.3, 70.3),
-    ("oversized", "BACK"): (22.8, 17.8, 54.3, 68.4),
-    ("babylook", "FRONT"): (23.3, 16.9, 53.3, 67.4),
-    ("babylook", "BACK"): (26.7, 18.5, 50.0, 64.9),
-}
-
-
-def _print_area(model_id: str, side: str) -> dict:
-    px, py, pw, ph = PRINT_AREA_BY_MODEL_SIDE[(model_id, side)]
-    return {"print_x": px, "print_y": py, "print_w": pw, "print_h": ph}
-
-
-SEED_MOCKUPS = [
-    {"model_id": "regular", "color": "Preto", "side": "FRONT", "file": "regular_frente.png",
-     **_print_area("regular", "FRONT")},
-    {"model_id": "regular", "color": "Preto", "side": "BACK", "file": "regular_costas.png",
-     **_print_area("regular", "BACK")},
-    {"model_id": "babylook", "color": "Preto", "side": "FRONT", "file": "babylook_frente.png",
-     **_print_area("babylook", "FRONT")},
-    {"model_id": "babylook", "color": "Preto", "side": "BACK", "file": "babylook_costas.png",
-     **_print_area("babylook", "BACK")},
-    {"model_id": "oversized", "color": "Preto", "side": "FRONT", "file": "oversized_frente.png",
-     **_print_area("oversized", "FRONT")},
-    {"model_id": "oversized", "color": "Preto", "side": "BACK", "file": "oversized_costas.png",
-     **_print_area("oversized", "BACK")},
-
-    # Fotos reais das outras cores (recortadas de fotos frente+costas
-    # lado a lado) — usam a mesma área de impressão do preto pra cada
-    # modelo+lado, assumindo o mesmo enquadramento/tamanho de foto.
-    {"model_id": "regular", "color": "Branco", "side": "FRONT", "file": "regular_branco_frente.png",
-     **_print_area("regular", "FRONT")},
-    {"model_id": "regular", "color": "Branco", "side": "BACK", "file": "regular_branco_costas.png",
-     **_print_area("regular", "BACK")},
-    {"model_id": "regular", "color": "Marrom", "side": "FRONT", "file": "regular_marrom_frente.png",
-     **_print_area("regular", "FRONT")},
-    {"model_id": "regular", "color": "Marrom", "side": "BACK", "file": "regular_marrom_costas.png",
-     **_print_area("regular", "BACK")},
-    {"model_id": "regular", "color": "Off White", "side": "FRONT", "file": "regular_offwhite_frente.png",
-     **_print_area("regular", "FRONT")},
-    {"model_id": "regular", "color": "Off White", "side": "BACK", "file": "regular_offwhite_costas.png",
-     **_print_area("regular", "BACK")},
-
-    {"model_id": "babylook", "color": "Branco", "side": "FRONT", "file": "babylook_branco_frente.png",
-     **_print_area("babylook", "FRONT")},
-    {"model_id": "babylook", "color": "Branco", "side": "BACK", "file": "babylook_branco_costas.png",
-     **_print_area("babylook", "BACK")},
-    {"model_id": "babylook", "color": "Marrom", "side": "FRONT", "file": "babylook_marrom_frente.png",
-     **_print_area("babylook", "FRONT")},
-    {"model_id": "babylook", "color": "Marrom", "side": "BACK", "file": "babylook_marrom_costas.png",
-     **_print_area("babylook", "BACK")},
-    {"model_id": "babylook", "color": "Off White", "side": "FRONT", "file": "babylook_offwhite_frente.png",
-     **_print_area("babylook", "FRONT")},
-    {"model_id": "babylook", "color": "Off White", "side": "BACK", "file": "babylook_offwhite_costas.png",
-     **_print_area("babylook", "BACK")},
-
-    {"model_id": "oversized", "color": "Branco", "side": "FRONT", "file": "oversized_branco_frente.png",
-     **_print_area("oversized", "FRONT")},
-    {"model_id": "oversized", "color": "Branco", "side": "BACK", "file": "oversized_branco_costas.png",
-     **_print_area("oversized", "BACK")},
-    {"model_id": "oversized", "color": "Marrom", "side": "FRONT", "file": "oversized_marrom_frente.png",
-     **_print_area("oversized", "FRONT")},
-    {"model_id": "oversized", "color": "Marrom", "side": "BACK", "file": "oversized_marrom_costas.png",
-     **_print_area("oversized", "BACK")},
-    {"model_id": "oversized", "color": "Off White", "side": "FRONT", "file": "oversized_offwhite_frente.png",
-     **_print_area("oversized", "FRONT")},
-    {"model_id": "oversized", "color": "Off White", "side": "BACK", "file": "oversized_offwhite_costas.png",
-     **_print_area("oversized", "BACK")},
-]
-
-
-def seed_shirt_mockups():
-    if not SEED_DIR.exists():
-        return
-    with db() as con:
-        for m in SEED_MOCKUPS:
-            src = SEED_DIR / m["file"]
-            if not src.exists():
+        # Cria os lados Grátis e Premium uma vez só, já com 8 pastas para renomear.
+        for side, label in LIBRARY_SIDES.items():
+            if con.execute("SELECT 1 FROM library_categories WHERE id=?", (side,)).fetchone():
                 continue
-            existing = con.execute(
-                "SELECT id FROM shirt_mockups WHERE model_id=? AND color=? AND side=?",
-                (m["model_id"], m["color"], m["side"])
-            ).fetchone()
-            if existing:
-                continue
-            mid = uuid.uuid4().hex[:12]
-            dest = MOCKUPS_DIR / f"seed_{m['model_id']}_{safe_name(m['color']).lower()}_{m['side'].lower()}{src.suffix}"
-            if not dest.exists():
-                shutil.copy2(src, dest)
-            con.execute(
-                """INSERT INTO shirt_mockups
-                   (id,created_at,model_id,color,side,file_path,preview_url,print_x,print_y,print_w,print_h)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (mid, time.time(), m["model_id"], m["color"], m["side"], str(dest),
-                 f"/media/mockups/{dest.name}", m["print_x"], m["print_y"], m["print_w"], m["print_h"])
+            now = time.time()
+            con.executemany(
+                "INSERT INTO library_categories (id,created_at,name,parent_id,access) VALUES(?,?,?,?,?)",
+                [(side, now, label, None, side)]
+                + [(uuid.uuid4().hex[:12], now + i / 1000, f"pasta{i:02d}", side, side) for i in range(1, 9)]
             )
+
+        relocate_paths(con)
+
+
+def relocate_paths(con: sqlite3.Connection):
+    """O banco guarda caminhos absolutos. Com o projeto copiado pra outra
+    pasta ou pro servidor (C:\\Users\\... no Linux), eles apontariam pro lugar
+    antigo e biblioteca, mockups e pedidos dariam "arquivo não encontrado".
+    Cada coluna mora numa pasta conhecida: refaz o caminho pela pasta atual."""
+    for table, col, folder in (
+        ("artworks", "file_path", ARTWORKS_DIR),
+        ("shirt_mockups", "file_path", MOCKUPS_DIR),
+        ("library_arts", "file_path", LIBRARY_DIR),
+        ("orders", "folder_path", ORDERS_DIR),
+        ("orders", "production_drop_path", PRODUCTION_DROP),
+    ):
+        rows = con.execute(f"SELECT rowid, {col} AS p FROM {table} WHERE {col} != ''").fetchall()
+        for row in rows:
+            # Separa por \ e por /: o caminho pode ter vindo do Windows.
+            new = str(folder / re.split(r"[\\/]", row["p"].rstrip("\\/"))[-1])
+            if new != row["p"]:
+                con.execute(f"UPDATE {table} SET {col}=? WHERE rowid=?", (new, row["rowid"]))
 
 
 def safe_name(value: str) -> str:
-    out = []
+    out: list[str] = []
     for ch in value.strip():
         if ch.isalnum() or ch in "-_":
             out.append(ch)
@@ -269,23 +297,62 @@ def only_digits(value: str) -> str:
     return re.sub(r"\D", "", value or "")
 
 
-def hash_password(password: str, salt: str | None = None) -> str:
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000).hex()
-    return f"{salt}${digest}"
+# ---------- Senhas ----------
+# Senha nunca é guardada nem dá pra ser recuperada: guardamos só um hash
+# PBKDF2-SHA256 com sal aleatório e muitas iterações (lento de propósito, pra
+# quem roubar o banco não conseguir testar milhões de senhas por segundo).
+# Formato: pbkdf2_sha256$<iterações>$<sal>$<hash>. As iterações ficam no
+# próprio hash: dá pra subir PWD_ITERATIONS no futuro e as senhas antigas
+# continuam valendo (e são refeitas no próximo login).
+PWD_SCHEME = "pbkdf2_sha256"
+PWD_ITERATIONS = 600_000   # recomendação da OWASP para PBKDF2-SHA256 (≈150 ms por login)
+PWD_MIN_LENGTH = 8
+PWD_MAX_LENGTH = 128       # limite só pra ninguém mandar um texto gigante pro hash
+
+
+def _pbkdf2(password: str, salt: str, iterations: int) -> str:
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations).hex()
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    return f"{PWD_SCHEME}${PWD_ITERATIONS}${salt}${_pbkdf2(password, salt, PWD_ITERATIONS)}"
 
 
 def verify_password(password: str, stored: str | None) -> bool:
-    if not stored:
+    """Confere em tempo constante. Aceita o formato atual e o antigo
+    (`sal$hash`, 100 mil iterações), que é refeito no próximo login."""
+    if not stored or len(password) > PWD_MAX_LENGTH:
         return False
-    try:
-        salt, _digest = stored.split("$", 1)
-    except ValueError:
+    parts = stored.split("$")
+    if len(parts) == 4 and parts[0] == PWD_SCHEME and parts[1].isdigit():
+        expected, salt, iterations = parts[3], parts[2], int(parts[1])
+    elif len(parts) == 2:
+        expected, salt, iterations = parts[1], parts[0], 100_000
+    else:
         return False
-    return hash_password(password, salt) == stored
+    return hmac.compare_digest(_pbkdf2(password, salt, iterations), expected)
 
 
-def public_customer(row: dict) -> dict:
+def password_needs_upgrade(stored: str | None) -> bool:
+    parts = (stored or "").split("$")
+    return not (len(parts) == 4 and parts[0] == PWD_SCHEME and parts[1] == str(PWD_ITERATIONS))
+
+
+def check_new_password(password: str, what: str = "A senha"):
+    if len(password) < PWD_MIN_LENGTH:
+        raise HTTPException(400, f"{what} precisa ter pelo menos {PWD_MIN_LENGTH} caracteres.")
+    if len(password) > PWD_MAX_LENGTH:
+        raise HTTPException(400, f"{what} pode ter no máximo {PWD_MAX_LENGTH} caracteres.")
+
+
+# Hash de uma senha qualquer: o login confere contra ele quando o e-mail não
+# existe, pra demorar o mesmo tanto. Sem isso, o tempo da resposta entregava
+# quais e-mails têm conta.
+_DUMMY_HASH = hash_password(secrets.token_hex(16))
+
+
+def public_customer(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
         "email": row["email"],
@@ -294,7 +361,76 @@ def public_customer(row: dict) -> dict:
         "cep": row["cep"],
         "address_number": row["address_number"],
         "document": row["document"],
+        "premium_until": row.get("premium_until") or 0,
+        "created_at": row.get("created_at") or 0,
+        # Conta criada pelo Google não tem senha: o perfil mostra "Criar senha".
+        "has_password": bool(row.get("password_hash")),
     }
+
+
+def clean_profile(full_name: str, phone: str, cep: str, address_number: str, document: str) -> dict[str, str]:
+    """Validação dos dados do cliente, igual no cadastro e no "Meus dados"."""
+    profile = {
+        "full_name": full_name.strip(),
+        "phone": only_digits(phone),
+        "cep": only_digits(cep),
+        "address_number": address_number.strip(),
+        "document": only_digits(document),
+    }
+    if not profile["full_name"]:
+        raise HTTPException(400, "Informe o nome completo.")
+    if profile["phone"] and len(profile["phone"]) < 8:
+        raise HTTPException(400, "Telefone inválido.")
+    if profile["cep"] and len(profile["cep"]) != 8:
+        raise HTTPException(400, "CEP inválido, use o formato 00000-000.")
+    if profile["document"] and len(profile["document"]) not in (11, 14):
+        raise HTTPException(400, "CPF/CNPJ inválido.")
+    return profile
+
+
+# Depois disso o login vence e o cliente entra de novo (um token vazado não
+# vale pra sempre).
+SESSION_DAYS = 30
+
+
+def new_session(customer: dict[str, Any]) -> dict[str, Any]:
+    """Resposta do login/cadastro: os dados do cliente mais um token de
+    sessão. Antes o login ficava só no navegador e o servidor não tinha como
+    saber quem estava pedindo; o premium e o download grátis dependem disso."""
+    token = secrets.token_urlsafe(32)
+    with db() as con:
+        con.execute(
+            "DELETE FROM customer_sessions WHERE created_at < ?",
+            (time.time() - SESSION_DAYS * 86400,)
+        )
+        con.execute(
+            "INSERT INTO customer_sessions (token,customer_id,created_at) VALUES(?,?,?)",
+            (token, customer["id"], time.time())
+        )
+    return {**public_customer(customer), "token": token}
+
+
+def customer_from_token(token: str | None) -> dict[str, Any] | None:
+    if not token:
+        return None
+    with db() as con:
+        row = con.execute(
+            """SELECT c.* FROM customer_sessions s JOIN customers c ON c.id=s.customer_id
+               WHERE s.token=? AND s.created_at > ?""",
+            (token, time.time() - SESSION_DAYS * 86400)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def require_customer(x_customer_token: str | None = Header(None)) -> dict[str, Any]:
+    customer = customer_from_token(x_customer_token)
+    if not customer:
+        raise HTTPException(401, "Entre na sua conta de novo.")
+    return customer
+
+
+def premium_active(customer: dict[str, Any]) -> bool:
+    return float(customer.get("premium_until") or 0) > time.time()
 
 
 class CustomerRegister(BaseModel):
@@ -316,7 +452,21 @@ class GoogleAuth(BaseModel):
     credential: str
 
 
+class ProfileUpdate(BaseModel):
+    full_name: str
+    phone: str = ""
+    cep: str = ""
+    address_number: str = ""
+    document: str = ""
+
+
+class PasswordChange(BaseModel):
+    current_password: str = ""
+    new_password: str
+
+
 def require_admin(
+    request: Request,
     x_admin_key: str | None = Header(None),
     x_admin_user: str | None = Header(None),
 ):
@@ -328,48 +478,150 @@ def require_admin(
     Usuário e senha são validados só aqui, no servidor — nenhum dos dois
     é enviado pro navegador em nenhuma rota pública (antes o usuário
     ficava hardcoded no app.js e a senha vazava inteira em /api/config,
-    então qualquer visitante conseguia ler as credenciais do Admin)."""
-    expected_key = str(CONFIG.get("admin_key", ""))
-    expected_user = str(CONFIG.get("admin_user", ""))
-    if not expected_key or expected_key == "TROQUE-ESTA-CHAVE-ADMIN":
+    então qualquer visitante conseguia ler as credenciais do Admin).
+
+    Vale o login principal (admin_user/admin_key) e qualquer um da lista
+    "admins" do config.json, todos com o mesmo acesso."""
+    logins = [(CONFIG.get("admin_user"), CONFIG.get("admin_key"))]
+    logins += [(a.get("user"), a.get("key")) for a in CONFIG.get("admins") or []]
+    # Senha vazia ou ainda com o texto de exemplo (TROQUE-...) não vale.
+    logins = [(str(u), str(k)) for u, k in logins if u and k and not str(k).startswith("TROQUE-")]
+    if not logins:
         raise HTTPException(
             500,
             "admin_key ainda não foi trocada em config.json. Configure antes de usar o Admin."
         )
-    if not x_admin_user or not secrets.compare_digest(x_admin_user, expected_user):
-        raise HTTPException(401, "Usuário ou senha de admin inválidos.")
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected_key):
-        raise HTTPException(401, "Usuário ou senha de admin inválidos.")
+    user, key = x_admin_user or "", x_admin_key or ""
+    if not user and not key:
+        # Sem usuário nem senha não é tentativa de login (robô varrendo /api/admin,
+        # página aberta sem entrar): recusa sem contar, senão bloquearia o IP
+        # de quem divide a rede com o Admin.
+        raise HTTPException(401, "Entre no Admin.")
+    # Só as senhas erradas contam: o Admin logado faz várias chamadas por minuto.
+    fail_keys = [f"admin-ip:{client_ip(request)}", f"admin-user:{user.lower()[:100]}"]
+    login_guard(fail_keys)
+    # Confere o usuário em todos, sem parar no primeiro: o tempo de resposta
+    # não entrega qual usuário existe. A senha só é conferida no que bateu.
+    matches = [k for u, k in logins if secrets.compare_digest(user.encode(), u.encode())]
+    ok = admin_key_matches(key, matches[0] if matches else _DUMMY_HASH)
+    if not ok:
+        login_failed(fail_keys, "Usuário ou senha de admin inválidos.")
 
 
-_AI_RATE_LIMIT: dict[str, list[float]] = {}
+# Senhas de admin que já bateram com o hash nesta execução. O Admin manda a
+# senha em toda chamada; refazer o PBKDF2 (≈150 ms) em cada uma deixaria o
+# painel lento. A chave do cache é um HMAC com segredo aleatório do processo:
+# nem a senha nem algo que dê pra testar offline fica na memória.
+_ADMIN_OK: set[str] = set()
+_ADMIN_CACHE_SECRET = secrets.token_bytes(32)
 
 
-def check_ai_rate_limit(client_ip: str):
-    """Limite simples (em memória, por IP) pra reduzir o risco de alguém
-    gerar centenas de imagens por IA de graça e estourar sua conta da
-    OpenAI. Não substitui um rate limit de verdade (ex.: Redis) se o
-    tráfego crescer, mas cobre o caso de abuso básico."""
+def admin_key_matches(given: str, stored: str) -> bool:
+    """`stored` pode ser o hash (pbkdf2_sha256$..., gerado com
+    `python app.py --hash-senha`) ou, por compatibilidade, a senha em texto."""
+    if not stored.startswith(PWD_SCHEME + "$"):
+        return secrets.compare_digest(given.encode(), stored.encode())
+    tag = hmac.new(_ADMIN_CACHE_SECRET, f"{stored}\0{given}".encode(), "sha256").hexdigest()
+    if tag in _ADMIN_OK:
+        return True
+    if verify_password(given, stored):
+        _ADMIN_OK.add(tag)
+        return True
+    return False
+
+
+_RATE_LIMITS: dict[str, list[float]] = {}
+
+
+def client_ip(request: Request) -> str:
+    # Atrás do nginx o uvicorn já troca pelo IP real (X-Forwarded-For), desde
+    # que o nginx esteja na mesma máquina (forwarded_allow_ips=127.0.0.1).
+    return request.client.host if request.client else "unknown"
+
+
+def check_rate_limit(key: str, limit: int, window: float, message: str, record: bool = True):
+    """Recusa (429) quando `key` já teve `limit` registros nos últimos
+    `window` segundos; com record=True este pedido também conta. Fica em
+    memória: zera quando o servidor reinicia e não divide entre vários
+    processos, mas segura força bruta e abuso básico sem precisar de Redis."""
     now = time.time()
-    window = _AI_RATE_LIMIT.setdefault(client_ip, [])
-    window[:] = [t for t in window if now - t < 60]
-    if len(window) >= 6:
-        raise HTTPException(429, "Muitas gerações por IA em pouco tempo. Aguarde um minuto.")
-    window.append(now)
+    if len(_RATE_LIMITS) > 10_000:  # muitos IPs diferentes: descarta os parados há um dia
+        for k in [k for k, v in _RATE_LIMITS.items() if not v or now - v[-1] > 86400]:
+            del _RATE_LIMITS[k]
+    hits = _RATE_LIMITS[key] = [t for t in _RATE_LIMITS.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        raise HTTPException(429, message)
+    if record:
+        hits.append(now)
+
+
+def record_hit(key: str):
+    _RATE_LIMITS.setdefault(key, []).append(time.time())
+
+
+# ---------- Tentativas de senha ----------
+# Login do cliente, login do Admin, "senha atual" na troca de senha e senha na
+# exclusão da conta: depois de `max_attempts` erros (padrão 5) em `lock_minutes`
+# (padrão 15), bloqueia. Conta por IP E pela conta (e-mail/usuário): trocar de
+# IP não dá mais chances na mesma conta. Senha certa zera a contagem.
+# A contagem vale pra e-mail que nem existe: o bloqueio não entrega quem tem conta.
+LOGIN_CFG: dict[str, Any] = CONFIG.get("login") or {}
+LOGIN_MAX_ATTEMPTS = int(LOGIN_CFG.get("max_attempts") or 5)
+LOGIN_LOCK_SECONDS = float(LOGIN_CFG.get("lock_minutes") or 15) * 60
+
+
+def _recent_failures(key: str) -> list[float]:
+    now = time.time()
+    hits = _RATE_LIMITS[key] = [t for t in _RATE_LIMITS.get(key, []) if now - t < LOGIN_LOCK_SECONDS]
+    return hits
+
+
+def login_guard(keys: list[str]):
+    """Recusa (429) se qualquer uma das chaves já está bloqueada, dizendo quanto falta."""
+    for key in keys:
+        hits = _recent_failures(key)
+        if len(hits) >= LOGIN_MAX_ATTEMPTS:
+            wait = max(1, round((LOGIN_LOCK_SECONDS - (time.time() - hits[0])) / 60))
+            raise HTTPException(429, f"Muitas tentativas erradas. Tente de novo em {wait} minuto{'s' if wait > 1 else ''}.")
+
+
+def login_failed(keys: list[str], message: str, status: int = 401):
+    """Registra o erro e responde dizendo quantas tentativas sobram."""
+    for key in keys:
+        record_hit(key)
+    left = LOGIN_MAX_ATTEMPTS - max(len(_recent_failures(k)) for k in keys)
+    if left <= 0:
+        raise HTTPException(429, f"{message} Você errou {LOGIN_MAX_ATTEMPTS} vezes: tente de novo em "
+                                 f"{round(LOGIN_LOCK_SECONDS / 60)} minutos.")
+    raise HTTPException(status, f"{message} {'Resta 1 tentativa' if left == 1 else f'Restam {left} tentativas'}.")
+
+
+def login_ok(keys: list[str]):
+    for key in keys:
+        _RATE_LIMITS.pop(key, None)
+
+
+def check_order_rate_limit(customer: dict[str, Any]):
+    # Pedidos e premium somados: 20 por hora numa conta já é folga pra cliente de verdade.
+    check_rate_limit(f"order:{customer['id']}", 20, 3600,
+                     "Muitos pedidos em pouco tempo. Aguarde um pouco e tente de novo.")
 
 
 def next_order_number() -> str:
     stamp = time.strftime("%y%m%d")
     with db() as con:
-        count = con.execute(
-            "SELECT COUNT(*) AS n FROM orders WHERE order_number LIKE ?",
+        rows = con.execute(
+            "SELECT order_number FROM orders WHERE order_number LIKE ?",
             (f"{stamp}-%",)
-        ).fetchone()["n"] + 1
-    return f"{stamp}-{count:04d}"
+        ).fetchall()
+    # Pelo maior número do dia, não pela contagem: com um pedido apagado do
+    # banco, a contagem repetia o número de um pedido que ainda existe.
+    last = max((int(r["order_number"].split("-")[1]) for r in rows), default=0)
+    return f"{stamp}-{last + 1:04d}"
 
 
 def image_info(path: Path):
-    result = {"width_px": None, "height_px": None, "has_alpha": None}
+    result: dict[str, int | bool | None] = {"width_px": None, "height_px": None, "has_alpha": None}
     try:
         with Image.open(path) as im:
             result["width_px"], result["height_px"] = im.size
@@ -382,7 +634,79 @@ def image_info(path: Path):
     return result
 
 
-def write_dtf_report(order_number: str, customer_name: str, sources: list[dict]) -> Path:
+def png_with_dpi(head: bytes, dpi: int) -> bytes:
+    """Insere o bloco pHYs (DPI) logo depois do IHDR, se o PNG ainda não tiver
+    um. `head` é o começo do arquivo; o IHDR sempre ocupa os bytes 8 a 33."""
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return head
+    if b"pHYs" in head[:head.find(b"IDAT")]:
+        return head
+    ppm = round(dpi / 0.0254)  # o PNG guarda pixels por metro
+    body = b"pHYs" + struct.pack(">IIB", ppm, ppm, 1)
+    return head[:33] + struct.pack(">I", 9) + body + struct.pack(">I", zlib.crc32(body)) + head[33:]
+
+
+async def save_upload(upload: UploadFile, path: Path):
+    """Grava o arquivo enviado. O canvas do navegador não grava DPI no PNG, e
+    sem isso o RIP/Photoshop abre a arte a 72 dpi, umas 4x maior do que o
+    tamanho que o cliente escolheu. Aqui o PNG ganha o dpi do config.
+    Acima de max_upload_mb o envio é recusado (o arquivo parcial fica na
+    pasta do pedido, que o create_order apaga ao receber o erro)."""
+    dpi = int(CONFIG.get("dpi") or 300)
+    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    written = 0
+    first = True
+    with path.open("wb") as f:
+        while chunk := await upload.read(1024 * 1024):
+            written += len(chunk)
+            if written > max_mb * 1024 * 1024:
+                raise HTTPException(413, f"Arquivo grande demais (máximo {max_mb} MB).")
+            if first and path.suffix.lower() == ".png":
+                chunk = png_with_dpi(chunk, dpi)
+            first = False
+            f.write(chunk)
+
+
+# ---------- Biblioteca de artes digitais (hospedada no próprio site) ----------
+# Categoria (parent_id vazio) -> subcategoria (parent_id = categoria) -> artes.
+# O acesso (free/premium) fica na categoria ou subcategoria onde a arte está.
+LIBRARY_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+THUMB_PX = 600  # prévia dos cartões (pública)
+
+
+def digital_cfg() -> dict[str, Any]:
+    return CONFIG.get("digital_arts") or {}
+
+
+def library_art(art_id: str) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute(
+            """SELECT a.*, c.access FROM library_arts a
+               JOIN library_categories c ON c.id=a.category_id WHERE a.id=?""",
+            (art_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Arte não encontrada.")
+    return dict(row)
+
+
+def library_preview(art: dict[str, Any]) -> Path:
+    """Prévia reduzida (webp, mantém a transparência), gerada uma vez e guardada em cache."""
+    dest = DIGITAL_CACHE_DIR / f"lib_{art['id']}_{THUMB_PX}.webp"
+    if not dest.exists():
+        with Image.open(art["file_path"]) as im:
+            small = im.convert("RGBA")
+        small.thumbnail((THUMB_PX, THUMB_PX), Image.Resampling.LANCZOS)
+        small.save(dest, "WEBP", quality=88)
+    return dest
+
+
+def remove_library_files(art_id: str, file_path: str):
+    Path(file_path).unlink(missing_ok=True)
+    (DIGITAL_CACHE_DIR / f"lib_{art_id}_{THUMB_PX}.webp").unlink(missing_ok=True)
+
+
+def write_dtf_report(order_number: str, customer_name: str, sources: list[dict[str, Any]]) -> Path:
     """Relatório pro operador de DTF: nome, metragem e quantidade de cada
     arte, na ordem exata em que o cliente montou a chapa (sources já vem
     nessa ordem, direto da lista gangItems do editor)."""
@@ -411,7 +735,72 @@ def write_dtf_report(order_number: str, customer_name: str, sources: list[dict])
     return report_path
 
 
-def load_order(order_id: str):
+def calc_order_total(
+    sale_type: str,
+    data: dict[str, Any],
+    digital_artwork_row: dict[str, Any] | None,
+) -> float:
+    """Preço calculado aqui, com os valores do config.json. O total que o
+    navegador manda é só a estimativa da tela: antes ele ia direto pro
+    banco, e qualquer um podia criar um pedido de R$ 0,01 editando o JSON."""
+    pricing = CONFIG.get("pricing", {})
+
+    if sale_type == "DIGITAL_ART":
+        if not digital_artwork_row:
+            raise HTTPException(400, "Arte digital não informada.")
+        return round(float(digital_artwork_row["digital_price"]), 2)
+
+    if sale_type == "DTF_ONLY":
+        # Metragem medida no arquivo da chapa (é ele que vai pra impressão),
+        # não no height_cm que o navegador informa.
+        art = data.get("production_art") or {}
+        width_px, height_px = art.get("width_px"), art.get("height_px")
+        if not width_px or not height_px:
+            raise HTTPException(400, "Envie o arquivo da chapa.")
+        dpi = float(CONFIG.get("dpi") or 300)
+        if width_px / dpi * 2.54 > float(CONFIG.get("dtf_sheet_width_cm") or 58.5) + 0.5:
+            raise HTTPException(400, "A chapa é mais larga que o rolo de DTF.")
+        height_cm = max(height_px / dpi * 2.54, float(CONFIG.get("dtf_sheet_min_height_cm") or 0))
+        meters = height_cm / 100
+        tiers = pricing.get("dtf_gang_sheet_tiers") or []
+        price_per_m = tiers[-1]["price_per_m"] if tiers else 39.9
+        for tier in tiers:
+            if meters <= tier["up_to_m"]:
+                price_per_m = tier["price_per_m"]
+                break
+        return round(max(meters, 0.1) * float(price_per_m), 2)
+
+    # Camiseta (FINISHED_SHIRT / DTF_PLUS_SHIRT): preço por peça.
+    product = data.get("product") or {}
+    models = CONFIG.get("shirt_models") or []
+    model = (
+        next((m for m in models if m["id"] == product.get("shirt_model_id")), None)
+        or next((m for m in models if m["name"] == product.get("shirt_model")), None)
+    )
+    if not model:
+        raise HTTPException(400, "Modelo de camiseta inválido.")
+    sent_sizes = product.get("sizes") or {}
+    sizes: dict[str, int] = {}
+    # O modelo pode ter tamanhos próprios (o infantil usa 2 a 16).
+    for size in model.get("sizes") or CONFIG.get("sizes") or []:
+        try:
+            sizes[size] = max(0, int(sent_sizes.get(size) or 0))
+        except (TypeError, ValueError):
+            sizes[size] = 0
+    qty = sum(sizes.values())
+    if qty < 1:
+        raise HTTPException(400, "Informe a quantidade em pelo menos um tamanho.")
+    # Grava as quantidades já limpas: é isso que a produção vai ler.
+    product["sizes"] = sizes
+    data["product"] = product
+    data["dtf_quantity"] = qty
+    unit = float(pricing.get("dtf_only_unit", 0)) + float(model.get("base_price", 0))
+    if sale_type == "FINISHED_SHIRT":
+        unit += float(pricing.get("finished_press_unit", 0))
+    return round(qty * unit, 2)
+
+
+def load_order(order_id: str) -> dict[str, Any] | None:
     with db() as con:
         row = con.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
     return dict(row) if row else None
@@ -435,8 +824,12 @@ def release_paid_order_to_production(order_id: str):
 
     if drop_folder.exists():
         with db() as con:
+            # Pedido já marcado como pronto não volta pra "em produção" se o
+            # pagamento for aprovado de novo (webhook repetido).
             con.execute(
-                "UPDATE orders SET status='LIBERADO_PRODUCAO', production_drop_path=? WHERE id=?",
+                """UPDATE orders SET production_drop_path=?,
+                   status=CASE WHEN status='PRONTO' THEN status ELSE 'LIBERADO_PRODUCAO' END
+                   WHERE id=?""",
                 (str(drop_folder), order_id)
             )
         return str(drop_folder)
@@ -450,11 +843,12 @@ def release_paid_order_to_production(order_id: str):
             if (
                 p.name == "pedido.json"
                 or p.name.startswith("ARTE_PRODUCAO")
+                or p.name.startswith("POSICAO_")
                 or p.name.startswith("ARTE_DIGITAL")
             ):
                 shutil.copy2(p, drop_folder / p.name)
 
-        resumo = {
+        resumo: dict[str, Any] = {
             "pedido": row["order_number"],
             "cliente": row["customer_name"],
             "tipo": row["sale_type"],
@@ -480,24 +874,337 @@ def release_paid_order_to_production(order_id: str):
         raise
 
 
-init_db()
-# Desativado a pedido do usuário: o editor deve usar só o esquema 3D (SVG)
-# em vez das fotos reais de mockup. Reative chamando seed_shirt_mockups()
-# se quiser voltar a usar fotos.
-# seed_shirt_mockups()
+def finish_paid_order(order_id: str) -> str | None:
+    """Pedido pago: camiseta/DTF vai pra pasta de produção; o plano premium
+    soma os dias no acesso do cliente (uma vez só por pedido)."""
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["sale_type"] != "PREMIUM_SUB":
+        return release_paid_order_to_production(order_id)
+    data = json.loads(row["data_json"])
+    with db() as con:
+        claimed = con.execute(
+            "UPDATE orders SET status='PREMIUM_LIBERADO' WHERE id=? AND status!='PREMIUM_LIBERADO'",
+            (order_id,)
+        ).rowcount
+        if not claimed:
+            return None  # já liberado antes: aprovar de novo não soma mais dias
+        cust = con.execute(
+            "SELECT premium_until FROM customers WHERE id=?", (data.get("customer_id"),)
+        ).fetchone()
+        if not cust:
+            raise HTTPException(404, "Cliente do pedido não encontrado.")
+        # Renovou antes de vencer: os dias novos contam a partir do fim do atual.
+        start = max(time.time(), float(cust["premium_until"] or 0))
+        until = start + int(data.get("premium_days") or 30) * 86400
+        con.execute("UPDATE customers SET premium_until=? WHERE id=?", (until, data["customer_id"]))
+    return None
 
-app = FastAPI(title="Ripfire Studio Local", version="2.0.0")
+
+def unpaid_limit_seconds() -> float:
+    # Política de Reembolso: pedido não pago é cancelado 24 h depois de criado.
+    return float(CONFIG.get("unpaid_cancel_hours") or 24) * 3600
+
+
+def cancel_stale_orders():
+    """Cancela os pedidos não pagos que passaram do prazo. Roda sempre que
+    alguém olha os pedidos (Admin, Minha conta, pagar), então não precisa de
+    tarefa agendada. Os arquivos ficam: pagou por fora? O Admin ainda marca
+    como pago."""
+    with db() as con:
+        con.execute(
+            """UPDATE orders SET status='CANCELADO'
+               WHERE payment_status='PENDING' AND status='AGUARDANDO_PAGAMENTO' AND created_at < ?""",
+            (time.time() - unpaid_limit_seconds(),)
+        )
+
+
+def mark_order_paid(order_id: str, payment_ref: str | None = None) -> str | None:
+    """Pagamento aprovado (Admin, webhook ou retorno do Mercado Pago). Só o
+    primeiro aviso muda o status: o provedor repete o webhook, e um pedido
+    já pronto não pode voltar pra "pagamento aprovado"."""
+    with db() as con:
+        newly_paid = con.execute(
+            """UPDATE orders SET payment_status='PAID', status='PAGAMENTO_APROVADO',
+               payment_ref=COALESCE(?, payment_ref) WHERE id=? AND payment_status!='PAID'""",
+            (payment_ref, order_id)
+        ).rowcount
+    if newly_paid:
+        # Em segundo plano: o webhook do Mercado Pago tem 22 s pra receber o 200.
+        threading.Thread(target=send_server_purchase, args=(order_id,), daemon=True).start()
+    return finish_paid_order(order_id)
+
+
+# ---------- Compra enviada pelo servidor (GA4 e Meta) ----------
+# O evento do navegador só sai quando o cliente volta ao site depois de pagar.
+# Quem paga o Pix e fecha a aba sumia das métricas: aqui o servidor manda a
+# compra quando o pagamento é aprovado. Só pra quem deu consentimento (o
+# pedido guarda a escolha em data["tracking"]), e com o número do pedido como
+# id: GA (transaction_id) e Meta (event_id) descartam a repetição do navegador.
+def clean_tracking(raw: Any, request: Request) -> dict[str, Any]:
+    t = raw if isinstance(raw, dict) else {}
+    out: dict[str, Any] = {"analytics": t.get("analytics") is True, "marketing": t.get("marketing") is True}
+    if out["analytics"]:
+        out["ga_client_id"] = str(t.get("ga_client_id") or "")[:64]
+        out["ga_session_id"] = str(t.get("ga_session_id") or "")[:32]
+    if out["marketing"]:
+        out["fbp"] = str(t.get("fbp") or "")[:120]
+        out["fbc"] = str(t.get("fbc") or "")[:300]
+        # A Meta cruza a compra com o anúncio também pelo IP e navegador de quem comprou.
+        out["ip"] = client_ip(request)
+        out["user_agent"] = (request.headers.get("user-agent") or "")[:400]
+    return out
+
+
+def post_json(url: str, body: dict[str, Any]) -> int:
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.status
+
+
+def send_server_purchase(order_id: str):
+    row = load_order(order_id)
+    if not row:
+        return
+    t = json.loads(row["data_json"]).get("tracking") or {}
+    number, value = row["order_number"], round(float(row["total"]), 2)
+    item = {"item_id": row["sale_type"], "item_name": row["sale_type"], "price": value, "quantity": 1}
+    ga_id, ga_secret = tracking_id("GA4_MEASUREMENT_ID", r"G-[A-Z0-9]{4,20}"), os.getenv("GA4_API_SECRET", "").strip()
+    if t.get("analytics") and t.get("ga_client_id") and ga_id and ga_secret:
+        params: dict[str, Any] = {"transaction_id": number, "value": value, "currency": "BRL", "items": [item]}
+        if t.get("ga_session_id"):
+            params["session_id"] = t["ga_session_id"]  # junta a compra à visita que veio do anúncio
+        try:
+            post_json(
+                "https://www.google-analytics.com/mp/collect?"
+                + urllib.parse.urlencode({"measurement_id": ga_id, "api_secret": ga_secret}),
+                {"client_id": t["ga_client_id"], "events": [{"name": "purchase", "params": params}]},
+            )
+        except Exception as exc:
+            print(f"[ga4] compra {number} não enviada: {exc}")
+    pixel, token = tracking_id("META_PIXEL_ID", r"\d{6,20}"), os.getenv("META_CAPI_TOKEN", "").strip()
+    if t.get("marketing") and pixel and token:
+        user = {k: v for k, v in {"client_ip_address": t.get("ip"), "client_user_agent": t.get("user_agent"),
+                                  "fbp": t.get("fbp"), "fbc": t.get("fbc")}.items() if v}
+        version = os.getenv("META_GRAPH_VERSION", "v25.0").strip() or "v25.0"
+        event: dict[str, Any] = {
+            "event_name": "Purchase", "event_time": int(time.time()), "event_id": number,
+            "action_source": "website", "user_data": user,
+            "custom_data": {"currency": "BRL", "value": value, "order_id": number},
+        }
+        if site_url():
+            event["event_source_url"] = site_url() + "/"
+        try:
+            post_json(f"https://graph.facebook.com/{version}/{pixel}/events?"
+                      + urllib.parse.urlencode({"access_token": token}), {"data": [event]})
+        except Exception as exc:
+            print(f"[meta-capi] compra {number} não enviada: {exc}")
+
+
+# ---------- Pagamento online: Mercado Pago (Checkout Pro) ----------
+# O cliente paga numa página do Mercado Pago (Pix, cartão, boleto). O site
+# fica sabendo de dois jeitos: o webhook (só no servidor com https) e a
+# conferência na volta do pagamento / botão "Já paguei, verificar".
+MP_API = "https://api.mercadopago.com"
+
+
+def mp_token() -> str:
+    return os.getenv("MERCADOPAGO_ACCESS_TOKEN", "").strip()
+
+
+def site_url() -> str:
+    """Endereço público do site (SITE_URL no .env). O Mercado Pago só aceita
+    voltar pro site e avisar os pagamentos num domínio de verdade: com
+    127.0.0.1 ele mostra "Algo deu errado" no fim do pagamento."""
+    url = os.getenv("SITE_URL", "").strip().rstrip("/")
+    return url if url.startswith("https://") else ""
+
+
+def mp_request(method: str, path: str, body: dict[str, Any] | None = None, missing_ok: bool = False) -> dict[str, Any]:
+    req = urllib.request.Request(
+        MP_API + path, method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Authorization": f"Bearer {mp_token()}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if missing_ok and e.code == 404:
+            return {}
+        # O motivo fica no log do servidor (journalctl): ao cliente vai só o aviso.
+        print(f"[mercadopago] {method} {path} -> {e.code}: {e.read().decode('utf-8', 'replace')[:500]}")
+        raise HTTPException(502, "O Mercado Pago recusou a operação. Tente de novo em instantes.")
+    except (urllib.error.URLError, TimeoutError):
+        raise HTTPException(502, "Não foi possível falar com o Mercado Pago. Tente de novo em instantes.")
+
+
+def apply_mp_payment(payment: dict[str, Any]) -> bool:
+    """Libera o pedido de um pagamento buscado na API do Mercado Pago (nunca
+    o que veio no corpo do webhook, que qualquer um pode forjar), se estiver
+    aprovado e cobrir o valor do pedido."""
+    if payment.get("status") != "approved":
+        return False
+    row = load_order(str(payment.get("external_reference") or ""))
+    if not row:
+        return False
+    paid = float(payment.get("transaction_amount") or 0)
+    if payment.get("currency_id") != "BRL" or paid + 0.01 < float(row["total"]):
+        print(f"[mercadopago] pagamento {payment.get('id')} de {paid} não cobre o pedido {row['order_number']} ({row['total']})")
+        return False
+    mark_order_paid(row["id"], str(payment.get("id") or "") or None)
+    return True
+
+
+# ---------- Backup dos dados ----------
+# O banco (contas, pedidos, sessões, solicitações LGPD, métricas) é copiado
+# sozinho a cada `every_hours` (padrão 24 h) pra BACKUP_DIR, e as cópias com
+# mais de `keep_days` (padrão 14) somem — sempre ficam pelo menos as 3 últimas.
+# A cópia usa a API de backup do SQLite: fica certinha mesmo com o site
+# gravando no meio. Arquivos (artes dos pedidos, biblioteca) não entram aqui:
+# na VPS quem cuida deles é o deploy/backup.sh.
+BACKUP_NAME = re.compile(r"studio_\d{4}-\d{2}-\d{2}_\d{6}(?:_[a-z]+)?\.db")
+
+
+def backup_hours() -> float:
+    return float(BACKUP_CFG.get("every_hours") or 24)
+
+
+def list_backups() -> list[Path]:
+    """Do mais novo pro mais antigo."""
+    return sorted((p for p in BACKUP_DIR.glob("studio_*.db") if BACKUP_NAME.fullmatch(p.name)),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def backup_database(tag: str = "") -> Path:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"studio_{time.strftime('%Y-%m-%d_%H%M%S')}{'_' + tag if tag else ''}.db"
+    dest, tmp = BACKUP_DIR / name, BACKUP_DIR / (name + ".tmp")
+    src, dst = sqlite3.connect(DB_PATH, timeout=30), sqlite3.connect(tmp)
+    try:
+        src.backup(dst)
+        healthy = dst.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        dst.close()
+        src.close()
+    if not healthy:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("a cópia do banco não passou na verificação de integridade")
+    tmp.replace(dest)  # só aparece na lista depois de pronta e conferida
+    prune_backups()
+    return dest
+
+
+def prune_backups():
+    keep_days = float(BACKUP_CFG.get("keep_days") or 14)
+    limit = time.time() - keep_days * 86400
+    for old in list_backups()[3:]:
+        if old.stat().st_mtime < limit:
+            old.unlink(missing_ok=True)
+
+
+def backup_loop():
+    """Roda em segundo plano enquanto o servidor estiver ligado."""
+    while True:
+        try:
+            last = list_backups()[:1]
+            if not last or time.time() - last[0].stat().st_mtime >= backup_hours() * 3600:
+                print(f"[backup] banco salvo em {backup_database()}")
+        except Exception as exc:
+            print(f"[backup] FALHOU: {exc}")
+        time.sleep(600)
+
+
+def restore_database(source: Path):
+    """python app.py --restaurar <arquivo>: com o servidor DESLIGADO. Antes de
+    trocar, guarda o banco atual como backup "_antes" (dá pra voltar)."""
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", int(os.getenv("PORT", "8787")))) == 0:
+            sys.exit("Desligue o servidor antes de restaurar (feche o start.bat ou: systemctl stop ripfire).")
+    if not source.is_file():
+        sys.exit(f"Arquivo não encontrado: {source}")
+    chk = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    try:
+        ok = chk.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        has_tables = chk.execute("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('customers','orders')").fetchone()[0] == 2
+    except sqlite3.DatabaseError:
+        ok = has_tables = False
+    finally:
+        chk.close()
+    if not (ok and has_tables):
+        sys.exit("Esse arquivo não é um backup válido do Ripfire.")
+    if DB_PATH.exists():
+        print(f"Banco atual guardado em {backup_database('antes')}")
+    for extra in (DB_PATH.with_name(DB_PATH.name + "-wal"), DB_PATH.with_name(DB_PATH.name + "-shm")):
+        extra.unlink(missing_ok=True)
+    shutil.copy2(source, DB_PATH)
+    print(f"Restaurado: {source.name} → {DB_PATH}. Pode ligar o servidor de novo.")
+
+
+init_db()
+
+# Modalidades desligadas temporariamente (a opção também está comentada no
+# index.html). Para reativar uma, basta tirar daqui.
+DISABLED_SALE_TYPES = {"DTF_PLUS_SHIRT"}
+# Abas de manga direita/esquerda desligadas por enquanto (os botões estão
+# comentados no index.html). Para reativar, mude para True e tire o comentário.
+SLEEVES_ENABLED = False
+
+# Sem /docs e /openapi.json: no site publicado eles listariam todas as rotas
+# (inclusive as de admin) pra qualquer visitante.
+app = FastAPI(title="Ripfire Studio Local", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 app.mount("/media", StaticFiles(directory=BASE / "media"), name="media")
 
 
 @app.get("/")
 def index():
-    return FileResponse(BASE / "static" / "index.html")
+    # no-cache: o navegador sempre confere se a página mudou. Sem isso ele
+    # reaproveitava um index.html antigo junto com um app.js novo e as
+    # abas de lado da camisa paravam de funcionar.
+    return FileResponse(BASE / "static" / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # O navegador pede /favicon.ico em toda visita; sem isso cada uma gerava um 404.
+    return FileResponse(BASE / "static" / "img" / "logo.png", media_type="image/png",
+                        headers={"Cache-Control": "max-age=604800"})
+
+
+@app.get("/privacidade")
+def privacy_policy():
+    return FileResponse(BASE / "static" / "privacidade.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/termos")
+def terms_of_service():
+    return FileResponse(BASE / "static" / "termos.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/lgpd")
+def lgpd_form():
+    return FileResponse(BASE / "static" / "lgpd.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/reembolso")
+def refund_policy():
+    return FileResponse(BASE / "static" / "reembolso.html", headers={"Cache-Control": "no-cache"})
+
+
+def tracking_id(env: str, pattern: str) -> str:
+    """ID de GA4/Pixel do .env, só se tiver o formato certo: ele vai parar
+    dentro de uma URL de script no navegador."""
+    value = os.getenv(env, "").strip()
+    return value if re.fullmatch(pattern, value) else ""
 
 
 @app.get("/api/config")
-def get_config():
+def get_config() -> dict[str, Any]:
     """Só expõe o que a loja precisa pra funcionar no navegador. NUNCA
     devolva CONFIG inteiro aqui: ele guarda admin_key, admin_user e o
     webhook_secret de pagamento, que qualquer visitante veria em texto
@@ -510,37 +1217,37 @@ def get_config():
         "shirt_models": CONFIG.get("shirt_models"),
         "shirt_colors": CONFIG.get("shirt_colors"),
         "sizes": CONFIG.get("sizes"),
+        "size_print_limits": CONFIG.get("size_print_limits"),
         "pricing": CONFIG.get("pricing"),
         "dtf_sheet_width_cm": CONFIG.get("dtf_sheet_width_cm"),
         "dtf_sheet_min_height_cm": CONFIG.get("dtf_sheet_min_height_cm"),
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY")),
         "ai_model": os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2"),
         "google_client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
+        # Só preço e duração: as pastas do Drive não saem do servidor.
+        "premium_price": digital_cfg().get("premium_price_month"),
+        "premium_days": digital_cfg().get("premium_days"),
+        # Com o Mercado Pago configurado, criar o pedido já leva pro pagamento.
+        "online_payment": bool(mp_token()),
+        # Métricas e anúncios (só carregam no navegador com o consentimento do visitante).
+        "ga4_id": tracking_id("GA4_MEASUREMENT_ID", r"G-[A-Z0-9]{4,20}"),
+        "meta_pixel_id": tracking_id("META_PIXEL_ID", r"\d{6,20}"),
+        "gtm_id": tracking_id("GTM_CONTAINER_ID", r"GTM-[A-Z0-9]{4,12}"),
     }
 
 
 @app.post("/api/auth/register")
-def register_customer(payload: CustomerRegister):
-    full_name = payload.full_name.strip()
+def register_customer(payload: CustomerRegister, request: Request) -> dict[str, Any]:
+    # Contas em série do mesmo IP são robô (cada conta libera pedidos e IA).
+    check_rate_limit(f"register:{client_ip(request)}", 10, 3600,
+                     "Muitas contas criadas daqui em pouco tempo. Tente de novo mais tarde.")
+    profile = clean_profile(payload.full_name, payload.phone, payload.cep, payload.address_number, payload.document)
     email = payload.email.strip().lower()
-    phone = only_digits(payload.phone)
-    cep = only_digits(payload.cep)
-    address_number = payload.address_number.strip()
-    document = only_digits(payload.document)
     password = payload.password
 
-    if not full_name:
-        raise HTTPException(400, "Informe o nome completo.")
     if "@" not in email or len(email) < 5:
         raise HTTPException(400, "E-mail inválido.")
-    if len(password) < 6:
-        raise HTTPException(400, "A senha precisa ter pelo menos 6 caracteres.")
-    if phone and len(phone) < 8:
-        raise HTTPException(400, "Telefone inválido.")
-    if cep and len(cep) != 8:
-        raise HTTPException(400, "CEP inválido, use o formato 00000-000.")
-    if document and len(document) not in (11, 14):
-        raise HTTPException(400, "CPF/CNPJ inválido.")
+    check_new_password(password)
 
     with db() as con:
         existing = con.execute("SELECT id FROM customers WHERE email=?", (email,)).fetchone()
@@ -549,28 +1256,189 @@ def register_customer(payload: CustomerRegister):
         cid = uuid.uuid4().hex[:12]
         con.execute(
             """INSERT INTO customers
-               (id,created_at,email,password_hash,full_name,phone,cep,address_number,document)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (cid, time.time(), email, hash_password(password), full_name, phone, cep, address_number, document)
+               (id,created_at,email,password_hash,full_name,phone,cep,address_number,document,terms_accepted_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (cid, time.time(), email, hash_password(password), profile["full_name"], profile["phone"],
+             profile["cep"], profile["address_number"], profile["document"], time.time())
         )
-    return public_customer({
-        "id": cid, "email": email, "full_name": full_name, "phone": phone,
-        "cep": cep, "address_number": address_number, "document": document,
-    })
+        row = con.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
+    return new_session(dict(row))
 
 
 @app.post("/api/auth/login")
-def login_customer(payload: CustomerLogin):
+def login_customer(payload: CustomerLogin, request: Request) -> dict[str, Any]:
     email = payload.email.strip().lower()
+    fail_keys = [f"login-ip:{client_ip(request)}", f"login-email:{email[:200]}"]
+    login_guard(fail_keys)
     with db() as con:
         row = con.execute("SELECT * FROM customers WHERE email=?", (email,)).fetchone()
-    if not row or not verify_password(payload.password, row["password_hash"]):
-        raise HTTPException(401, "E-mail ou senha incorretos.")
+    # E-mail inexistente também passa pelo hash: mesmo tempo de resposta.
+    ok = verify_password(payload.password, row["password_hash"] if row and row["password_hash"] else _DUMMY_HASH)
+    if not row or not row["password_hash"] or not ok:
+        login_failed(fail_keys, "E-mail ou senha incorretos.")
+    login_ok(fail_keys)
+    if password_needs_upgrade(row["password_hash"]):
+        # Senha no formato antigo (100 mil iterações): refeita agora, sem o cliente perceber.
+        with db() as con:
+            con.execute("UPDATE customers SET password_hash=? WHERE id=?", (hash_password(payload.password), row["id"]))
+    return new_session(dict(row))
+
+
+@app.get("/api/me")
+def get_me(customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    """Dados atualizados do cliente logado (o premium muda quando o
+    pagamento é aprovado, sem a pessoa precisar entrar de novo)."""
+    return public_customer(customer)
+
+
+@app.post("/api/auth/logout")
+def logout_customer(x_customer_token: str | None = Header(None)) -> dict[str, Any]:
+    if x_customer_token:
+        with db() as con:
+            con.execute("DELETE FROM customer_sessions WHERE token=?", (x_customer_token,))
+    return {"ok": True}
+
+
+def order_is_customers(row: dict[str, Any], customer: dict[str, Any]) -> bool:
+    if row.get("customer_id"):
+        return row["customer_id"] == customer["id"]
+    # Pedido de antes do customer_id existir: vale o e-mail da conta.
+    return (row.get("customer_email") or "").strip().lower() == customer["email"].lower()
+
+
+def order_for_customer(row: dict[str, Any]) -> dict[str, Any]:
+    """Resumo do pedido pro "Minha conta" (sem o data_json inteiro)."""
+    data = json.loads(row["data_json"])
+    dpi = float(CONFIG.get("dpi") or 300)
+
+    def size_cm(art: dict[str, Any] | None) -> dict[str, float] | None:
+        # Medida real do arquivo de produção, não a que o navegador informou.
+        if not art or not art.get("width_px") or not art.get("height_px"):
+            return None
+        return {"w": round(art["width_px"] / dpi * 2.54, 1), "h": round(art["height_px"] / dpi * 2.54, 1)}
+
+    is_dtf = row["sale_type"] == "DTF_ONLY"
+    art_keys = (("FRONT", "production_art"), ("BACK", "production_art_back"),
+                ("SLEEVE_R", "production_art_sleeve_right"), ("SLEEVE_L", "production_art_sleeve_left"))
+    # Artes premium da biblioteca usadas no pedido (o editor grava premium_id nas fontes).
+    used_ids = {
+        src.get("premium_id")
+        for key in ("sources", "sources_front", "sources_back", "sources_sleeve_right", "sources_sleeve_left")
+        for src in data.get(key) or [] if src.get("premium_id")
+    }
+    premium_names: list[str] = []
+    if used_ids:
+        with db() as con:
+            premium_names = [r["name"] for r in con.execute(
+                f"""SELECT a.name FROM library_arts a JOIN library_categories c ON c.id=a.category_id
+                    WHERE c.access='premium' AND a.id IN ({','.join('?' * len(used_ids))})""",
+                tuple(used_ids)
+            )]
+    return {
+        "id": row["id"],
+        "order_number": row["order_number"],
+        "created_at": row["created_at"],
+        "sale_type": row["sale_type"],
+        "status": row["status"],
+        "payment_status": row["payment_status"],
+        "total": row["total"],
+        "product": data.get("product"),
+        "art_sizes": {} if is_dtf else {
+            side: size_cm(data.get(key)) for side, key in art_keys if size_cm(data.get(key))
+        },
+        "placements": [side for side, key in (("FRONT", "placement_front"), ("BACK", "placement_back")) if data.get(key)],
+        "sheet": size_cm(data.get("production_art")) if is_dtf else None,
+        "sources": [
+            {k: s.get(k) for k in ("name", "width_cm", "height_cm", "qty")} for s in data.get("sources") or []
+        ] if is_dtf else [],
+        "premium_arts": sorted(premium_names),
+        "premium_days": data.get("premium_days"),
+    }
+
+
+@app.get("/api/me/profile")
+def get_profile(customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    cancel_stale_orders()
+    with db() as con:
+        orders = con.execute(
+            """SELECT * FROM orders
+               WHERE customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)
+               ORDER BY created_at DESC""",
+            (customer["id"], customer["email"].lower())
+        ).fetchall()
+        downloads = con.execute(
+            """SELECT d.art_id, MAX(d.art_name) AS art_name, MAX(d.created_at) AS last_at, COUNT(*) AS times,
+                      MAX(a.id IS NOT NULL) AS available, MAX(c.name) AS category, MAX(c.access) AS access
+               FROM digital_downloads d
+               LEFT JOIN library_arts a ON a.id=d.art_id
+               LEFT JOIN library_categories c ON c.id=a.category_id
+               WHERE d.customer_id=?
+               GROUP BY d.art_id ORDER BY last_at DESC""",
+            (customer["id"],)
+        ).fetchall()
+    return {
+        "customer": public_customer(customer),
+        "orders": [order_for_customer(dict(r)) for r in orders],
+        "downloads": [dict(d) for d in downloads],
+    }
+
+
+@app.get("/api/me/orders/{order_id}/placement/{side}")
+def my_order_placement(order_id: str, side: str, customer: dict[str, Any] = Depends(require_customer)):
+    """Foto de posição (POSICAO_*) de um pedido do próprio cliente."""
+    row = load_order(order_id)
+    key = {"FRONT": "placement_front", "BACK": "placement_back"}.get(side)
+    if not row or not key or not order_is_customers(row, customer):
+        raise HTTPException(404, "Foto não encontrada.")
+    info = json.loads(row["data_json"]).get(key) or {}
+    path = Path(row["folder_path"]) / str(info.get("file") or "")
+    if not info.get("file") or not path.is_file():
+        raise HTTPException(404, "Foto não encontrada.")
+    return FileResponse(path)
+
+
+@app.patch("/api/me")
+def update_me(payload: ProfileUpdate, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    profile = clean_profile(payload.full_name, payload.phone, payload.cep, payload.address_number, payload.document)
+    with db() as con:
+        con.execute(
+            "UPDATE customers SET full_name=?, phone=?, cep=?, address_number=?, document=? WHERE id=?",
+            (profile["full_name"], profile["phone"], profile["cep"], profile["address_number"],
+             profile["document"], customer["id"])
+        )
+        row = con.execute("SELECT * FROM customers WHERE id=?", (customer["id"],)).fetchone()
     return public_customer(dict(row))
 
 
+@app.post("/api/me/password")
+def change_password(
+    payload: PasswordChange,
+    customer: dict[str, Any] = Depends(require_customer),
+    x_customer_token: str | None = Header(None),
+) -> dict[str, Any]:
+    check_new_password(payload.new_password, "A nova senha")
+    # Quem entrou pelo Google não tem senha ainda: cria sem pedir a atual.
+    if customer.get("password_hash"):
+        fail_keys = [f"pwd:{customer['id']}"]
+        login_guard(fail_keys)
+        if not verify_password(payload.current_password, customer["password_hash"]):
+            login_failed(fail_keys, "Senha atual incorreta.", 400)
+        login_ok(fail_keys)
+    with db() as con:
+        con.execute(
+            "UPDATE customers SET password_hash=? WHERE id=?",
+            (hash_password(payload.new_password), customer["id"])
+        )
+        # Desconecta os outros aparelhos; este continua logado.
+        con.execute(
+            "DELETE FROM customer_sessions WHERE customer_id=? AND token!=?",
+            (customer["id"], x_customer_token or "")
+        )
+    return {"ok": True}
+
+
 @app.post("/api/auth/google")
-def login_with_google(payload: GoogleAuth):
+def login_with_google(payload: GoogleAuth) -> dict[str, Any]:
     client_id = os.getenv("GOOGLE_CLIENT_ID", "")
     if not client_id:
         raise HTTPException(503, "Login com Google não configurado (GOOGLE_CLIENT_ID ausente no .env).")
@@ -579,7 +1447,7 @@ def login_with_google(payload: GoogleAuth):
     from google.oauth2 import id_token as google_id_token
 
     try:
-        claims = google_id_token.verify_oauth2_token(
+        claims = google_id_token.verify_oauth2_token(  # pyright: ignore[reportUnknownMemberType]
             payload.credential, google_requests.Request(), client_id
         )
     except ValueError:
@@ -602,13 +1470,247 @@ def login_with_google(payload: GoogleAuth):
             cid = uuid.uuid4().hex[:12]
             con.execute(
                 """INSERT INTO customers
-                   (id,created_at,email,password_hash,full_name,phone,cep,address_number,document,google_sub)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (cid, time.time(), email, None, full_name, "", "", "", "", sub)
+                   (id,created_at,email,password_hash,full_name,phone,cep,address_number,document,google_sub,terms_accepted_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (cid, time.time(), email, None, full_name, "", "", "", "", sub, time.time())
             )
             row = con.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
 
-    return public_customer(dict(row))
+    return new_session(dict(row))
+
+
+# ---------- LGPD: direitos do titular (art. 18) ----------
+LGPD_KINDS = {
+    "ACESSO": "Confirmar e acessar meus dados",
+    "CORRECAO": "Corrigir dados",
+    "EXCLUSAO": "Excluir meus dados",
+    "PORTABILIDADE": "Portabilidade dos dados",
+    "COMPARTILHAMENTO": "Saber com quem meus dados são compartilhados",
+    "REVOGACAO": "Revogar consentimento",
+    "OPOSICAO": "Oposição a um tratamento",
+    "OUTRO": "Outro assunto de privacidade",
+}
+LGPD_DEADLINE_DAYS = 15  # prazo de resposta prometido na Política de Privacidade
+
+
+class PrivacyRequest(BaseModel):
+    name: str
+    email: str
+    document: str = ""
+    kind: str
+    message: str = ""
+
+
+class AccountDelete(BaseModel):
+    confirm: str
+    password: str = ""
+
+
+@app.post("/api/lgpd/requests")
+def create_privacy_request(
+    payload: PrivacyRequest, request: Request, x_customer_token: str | None = Header(None),
+) -> dict[str, Any]:
+    """Formulário do titular (também pra quem não tem conta). Cada pedido
+    ganha um protocolo e fica no Admin até ser respondido."""
+    check_rate_limit(f"lgpd:{client_ip(request)}", 5, 3600,
+                     "Muitas solicitações em pouco tempo. Tente de novo mais tarde.")
+    name, email = payload.name.strip(), payload.email.strip().lower()
+    if not name:
+        raise HTTPException(400, "Informe seu nome.")
+    if "@" not in email or len(email) < 5:
+        raise HTTPException(400, "E-mail inválido.")
+    if payload.kind not in LGPD_KINDS:
+        raise HTTPException(400, "Escolha o tipo de solicitação.")
+    customer = customer_from_token(x_customer_token)
+    rid = uuid.uuid4().hex[:12]
+    protocol = f"LGPD-{time.strftime('%y%m%d')}-{secrets.token_hex(3).upper()}"
+    with db() as con:
+        con.execute(
+            """INSERT INTO privacy_requests (id,protocol,created_at,customer_id,name,email,document,kind,message)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (rid, protocol, time.time(), customer["id"] if customer else None, name[:200], email[:200],
+             only_digits(payload.document)[:14], payload.kind, payload.message.strip()[:3000])
+        )
+    return {"ok": True, "protocol": protocol, "deadline_days": LGPD_DEADLINE_DAYS}
+
+
+def customer_orders(con: sqlite3.Connection, customer: dict[str, Any]) -> list[sqlite3.Row]:
+    return con.execute(
+        """SELECT * FROM orders WHERE customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)
+           ORDER BY created_at DESC""",
+        (customer["id"], customer["email"].lower())
+    ).fetchall()
+
+
+@app.get("/api/me/export")
+def export_my_data(customer: dict[str, Any] = Depends(require_customer)):
+    """Acesso e portabilidade (art. 18, II e V): tudo que a loja guarda do
+    cliente num JSON legível por pessoas e por outros sistemas."""
+    with db() as con:
+        orders = customer_orders(con, customer)
+        downloads = con.execute(
+            "SELECT art_name, created_at FROM digital_downloads WHERE customer_id=? ORDER BY created_at",
+            (customer["id"],)
+        ).fetchall()
+        requests_ = con.execute(
+            "SELECT protocol, created_at, kind, message, status FROM privacy_requests WHERE customer_id=? OR email=?",
+            (customer["id"], customer["email"].lower())
+        ).fetchall()
+        sessions = con.execute(
+            "SELECT COUNT(*) FROM customer_sessions WHERE customer_id=?", (customer["id"],)
+        ).fetchone()[0]
+    iso = lambda ts: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else None  # noqa: E731
+    data = {
+        "gerado_em": iso(time.time()),
+        "loja": CONFIG.get("store_name"),
+        "conta": {
+            **{k: v for k, v in public_customer(customer).items() if k not in ("has_password",)},
+            "criada_em": iso(customer.get("created_at")),
+            "premium_ate": iso(customer.get("premium_until")),
+            "termos_aceitos_em": iso(customer.get("terms_accepted_at")),
+            "login_com_google": bool(customer.get("google_sub")),
+            "tem_senha": bool(customer.get("password_hash")),
+            "sessoes_ativas": sessions,
+        },
+        "pedidos": [
+            {**order_for_customer(dict(o)), "criado_em": iso(o["created_at"]),
+             "pagamento_mercadopago": o["payment_ref"]}
+            for o in orders
+        ],
+        "downloads_de_artes": [{"arte": d["art_name"], "em": iso(d["created_at"])} for d in downloads],
+        "solicitacoes_lgpd": [
+            {"protocolo": r["protocol"], "em": iso(r["created_at"]), "tipo": LGPD_KINDS.get(r["kind"], r["kind"]),
+             "mensagem": r["message"], "situacao": r["status"]}
+            for r in requests_
+        ],
+        "observacao": "As artes enviadas nos pedidos podem ser pedidas pelo formulário em /lgpd.",
+    }
+    return JSONResponse(data, headers={"Content-Disposition": 'attachment; filename="meus-dados-ripfire.json"'})
+
+
+@app.delete("/api/me")
+def delete_my_account(payload: AccountDelete, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    """Exclusão (art. 18, VI). Some a conta, as sessões, o histórico de
+    downloads e os pedidos não pagos (com os arquivos). Pedidos pagos ficam
+    com nome e e-mail, pela obrigação fiscal (art. 16, I), como diz a política."""
+    if payload.confirm.strip().upper() != "EXCLUIR":
+        raise HTTPException(400, 'Digite EXCLUIR para confirmar.')
+    if customer.get("password_hash"):
+        fail_keys = [f"pwd:{customer['id']}"]
+        login_guard(fail_keys)
+        if not verify_password(payload.password, customer["password_hash"]):
+            login_failed(fail_keys, "Senha incorreta.", 400)
+    with db() as con:
+        unpaid = [dict(o) for o in customer_orders(con, customer) if o["payment_status"] != "PAID"]
+        con.executemany("DELETE FROM orders WHERE id=?", [(o["id"],) for o in unpaid])
+        con.execute("DELETE FROM customer_sessions WHERE customer_id=?", (customer["id"],))
+        con.execute("DELETE FROM digital_downloads WHERE customer_id=?", (customer["id"],))
+        # As solicitações LGPD ficam (comprovam o atendimento), sem o vínculo com a conta.
+        con.execute("UPDATE privacy_requests SET customer_id=NULL WHERE customer_id=?", (customer["id"],))
+        con.execute("DELETE FROM customers WHERE id=?", (customer["id"],))
+    for o in unpaid:
+        if o["folder_path"]:
+            shutil.rmtree(o["folder_path"], ignore_errors=True)
+        shutil.rmtree(SOMENTE_DTF_DIR / f"{o['order_number']}__{safe_name(o['customer_name'])}", ignore_errors=True)
+    return {"ok": True, "deleted_unpaid_orders": len(unpaid)}
+
+
+@app.get("/api/admin/lgpd/requests", dependencies=[Depends(require_admin)])
+def list_privacy_requests() -> list[dict[str, Any]]:
+    with db() as con:
+        rows = con.execute("SELECT * FROM privacy_requests ORDER BY created_at DESC").fetchall()
+    return [
+        {**dict(r), "kind_label": LGPD_KINDS.get(r["kind"], r["kind"]),
+         "due_at": r["created_at"] + LGPD_DEADLINE_DAYS * 86400}
+        for r in rows
+    ]
+
+
+@app.patch("/api/admin/lgpd/requests/{request_id}", dependencies=[Depends(require_admin)])
+def update_privacy_request(request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    status = str(payload.get("status") or "")
+    if status not in {"ABERTO", "EM_ANDAMENTO", "CONCLUIDO", "RECUSADO"}:
+        raise HTTPException(400, "Situação inválida.")
+    with db() as con:
+        changed = con.execute(
+            "UPDATE privacy_requests SET status=?, answered_at=? WHERE id=?",
+            (status, time.time() if status in {"CONCLUIDO", "RECUSADO"} else None, request_id)
+        ).rowcount
+    if not changed:
+        raise HTTPException(404, "Solicitação não encontrada.")
+    return {"ok": True}
+
+
+@app.get("/api/admin/backups", dependencies=[Depends(require_admin)])
+def admin_list_backups() -> dict[str, Any]:
+    return {
+        "folder": str(BACKUP_DIR), "every_hours": backup_hours(), "keep_days": float(BACKUP_CFG.get("keep_days") or 14),
+        "backups": [{"name": p.name, "size": p.stat().st_size, "created_at": p.stat().st_mtime} for p in list_backups()],
+    }
+
+
+@app.post("/api/admin/backups", dependencies=[Depends(require_admin)])
+def admin_backup_now() -> dict[str, Any]:
+    try:
+        dest = backup_database("manual")
+    except Exception as exc:
+        raise HTTPException(500, f"Não foi possível fazer o backup: {exc}")
+    return {"ok": True, "name": dest.name}
+
+
+@app.get("/api/admin/backups/{name}", dependencies=[Depends(require_admin)])
+def admin_download_backup(name: str):
+    # Só nomes no formato dos backups: nada de "../" pra ler outros arquivos.
+    path = BACKUP_DIR / name
+    if not BACKUP_NAME.fullmatch(name) or not path.is_file():
+        raise HTTPException(404, "Backup não encontrado.")
+    return FileResponse(path, media_type="application/octet-stream", filename=name)
+
+
+# ---------- Métricas próprias, anônimas (sem cookie, sem IP, sem consentimento) ----------
+# GA e Meta só contam quem aceita os cookies. Aqui fica só "dia, página, total":
+# não dá pra saber quem foi, então não é dado pessoal (LGPD, art. 12) e conta
+# todo mundo. O Admin cruza com os pedidos do banco pra mostrar o funil real.
+METRIC_PAGES = {"home", "editor", "digital", "profile", "privacidade", "termos", "reembolso", "lgpd"}
+BOT_UA = re.compile(r"bot|crawl|spider|slurp|preview|headless|lighthouse|curl|wget|python|scrapy", re.I)
+
+
+class PageHit(BaseModel):
+    page: str
+
+
+@app.post("/api/metrics/hit", status_code=204)
+def metric_hit(payload: PageHit, request: Request):
+    if payload.page not in METRIC_PAGES or BOT_UA.search(request.headers.get("user-agent") or ""):
+        return
+    try:
+        # O IP só serve pro limite em memória, nunca é gravado.
+        check_rate_limit(f"hit:{client_ip(request)}", 300, 3600, "")
+    except HTTPException:
+        return
+    with db() as con:
+        con.execute(
+            """INSERT INTO page_hits (day,page,hits) VALUES(?,?,1)
+               ON CONFLICT(day,page) DO UPDATE SET hits=hits+1""",
+            (time.strftime("%Y-%m-%d"), payload.page)
+        )
+
+
+@app.get("/api/admin/metrics", dependencies=[Depends(require_admin)])
+def admin_metrics(days: int = 30) -> dict[str, Any]:
+    days = max(1, min(days, 365))
+    since_ts = time.time() - days * 86400
+    since_day = time.strftime("%Y-%m-%d", time.localtime(since_ts))
+    with db() as con:
+        hits = [dict(r) for r in con.execute(
+            "SELECT day, page, hits FROM page_hits WHERE day >= ? ORDER BY day", (since_day,))]
+        orders = [dict(r) for r in con.execute(
+            """SELECT date(created_at,'unixepoch','localtime') AS day, sale_type, payment_status, status, total
+               FROM orders WHERE created_at >= ?""", (since_ts,))]
+        signups = [dict(r) for r in con.execute(
+            """SELECT date(created_at,'unixepoch','localtime') AS day, COUNT(*) AS n FROM customers
+               WHERE created_at >= ? GROUP BY day""", (since_ts,))]
+    return {"days": days, "since": since_day, "hits": hits, "orders": orders, "signups": signups}
 
 
 @app.get("/api/artworks")
@@ -628,13 +1730,13 @@ async def create_artwork(
     can_customize: bool = Form(True),
     can_sell_digital: bool = Form(True),
     artwork: UploadFile = File(...),
-):
+) -> dict[str, Any]:
     ext = Path(artwork.filename or "").suffix.lower()
     if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
         raise HTTPException(400, "Envie PNG, JPG, JPEG ou WEBP.")
 
     aid = uuid.uuid4().hex[:12]
-    filename = f"{aid}_{safe_name(Path(artwork.filename).stem)}{ext}"
+    filename = f"{aid}_{safe_name(Path(artwork.filename or '').stem)}{ext}"
     dest = ARTWORKS_DIR / filename
 
     with dest.open("wb") as f:
@@ -676,7 +1778,7 @@ async def create_shirt_mockup(
     print_w: float = Form(40),
     print_h: float = Form(45),
     photo: UploadFile = File(...),
-):
+) -> dict[str, Any]:
     valid_models = {m["id"] for m in CONFIG.get("shirt_models", [])}
     if model_id not in valid_models:
         raise HTTPException(400, "Modelo inválido.")
@@ -733,13 +1835,16 @@ def delete_shirt_mockup(mockup_id: str):
 
 
 @app.patch("/api/admin/shirt-mockups/{mockup_id}/area", dependencies=[Depends(require_admin)])
-def update_shirt_mockup_area(mockup_id: str, payload: dict):
-    fields = {}
+def update_shirt_mockup_area(mockup_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    fields: dict[str, float] = {}
     for key in ("print_x", "print_y", "print_w", "print_h"):
         if key not in payload:
             raise HTTPException(400, f"Falta o campo {key}.")
-        value = float(payload[key])
-        if value < 0 or value > 100:
+        try:
+            value = float(payload[key])
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{key} inválido.")
+        if not 0 <= value <= 100:  # também recusa NaN
             raise HTTPException(400, f"{key} deve estar entre 0 e 100.")
         fields[key] = value
     with db() as con:
@@ -753,19 +1858,236 @@ def update_shirt_mockup_area(mockup_id: str, payload: dict):
     return {"ok": True}
 
 
+@app.get("/api/library")
+def get_library() -> dict[str, Any]:
+    """Os dois lados e as pastas de cada um, com a quantidade de artes (as artes vêm por pasta)."""
+    with db() as con:
+        rows = con.execute(
+            """SELECT c.*, (SELECT COUNT(*) FROM library_arts a WHERE a.category_id=c.id) AS art_count
+               FROM library_categories c ORDER BY c.name COLLATE NOCASE"""
+        ).fetchall()
+    return {"categories": [dict(r) for r in rows]}
+
+
+@app.get("/api/library/categories/{category_id}/arts")
+def get_library_arts(category_id: str) -> list[dict[str, Any]]:
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, name, created_at FROM library_arts WHERE category_id=? ORDER BY created_at DESC",
+            (category_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/library/arts/{art_id}/thumb")
+def library_art_thumb(art_id: str):
+    return FileResponse(
+        library_preview(library_art(art_id)), media_type="image/webp",
+        headers={"Cache-Control": "max-age=86400"}
+    )
+
+
+@app.get("/api/library/arts/{art_id}/file")
+def library_art_file(art_id: str, download: bool = False, customer: dict[str, Any] = Depends(require_customer)):
+    """Arquivo original (pra baixar ou usar no editor). Precisa de conta, e a
+    premium precisa do premium ativo. Cada download fica registrado com o cliente."""
+    art = library_art(art_id)
+    if art["access"] == "premium" and not premium_active(customer):
+        raise HTTPException(403, "Essa arte é premium. Assine o premium para baixar e usar.")
+    path = Path(art["file_path"])
+    if not path.is_file():
+        raise HTTPException(404, "Arquivo da arte não encontrado.")
+    if not download:
+        return FileResponse(path)
+    with db() as con:
+        con.execute(
+            "INSERT INTO digital_downloads (created_at,customer_id,art_id,art_name) VALUES(?,?,?,?)",
+            (time.time(), customer["id"], art_id, art["name"])
+        )
+    return FileResponse(path, filename=f"{art['name']}{path.suffix}")
+
+
+@app.post("/api/admin/library/categories", dependencies=[Depends(require_admin)])
+def create_library_category(payload: dict[str, Any]) -> dict[str, Any]:
+    """Nova pasta dentro de um dos lados. O acesso da pasta é o do lado."""
+    name = str(payload.get("name") or "").strip()
+    side = str(payload.get("parent_id") or "")
+    if not name:
+        raise HTTPException(400, "Informe o nome.")
+    if side not in LIBRARY_SIDES:
+        raise HTTPException(400, "Escolha o lado: Grátis ou Premium.")
+    cid = uuid.uuid4().hex[:12]
+    with db() as con:
+        con.execute(
+            "INSERT INTO library_categories (id,created_at,name,parent_id,access) VALUES(?,?,?,?,?)",
+            (cid, time.time(), name, side, side)
+        )
+    return {"ok": True, "id": cid}
+
+
+@app.patch("/api/admin/library/categories/{category_id}", dependencies=[Depends(require_admin)])
+def update_library_category(category_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Renomeia a pasta ou passa ela para o outro lado (as artes mudam de acesso junto)."""
+    if category_id in LIBRARY_SIDES:
+        raise HTTPException(400, "Os lados Grátis e Premium são fixos.")
+    fields: dict[str, str] = {}
+    if "name" in payload:
+        fields["name"] = str(payload["name"] or "").strip()
+        if not fields["name"]:
+            raise HTTPException(400, "Informe o nome.")
+    if "parent_id" in payload:
+        side = str(payload["parent_id"] or "")
+        if side not in LIBRARY_SIDES:
+            raise HTTPException(400, "Lado inválido.")
+        fields["parent_id"] = fields["access"] = side
+    if not fields:
+        raise HTTPException(400, "Nada para alterar.")
+    with db() as con:
+        changed = con.execute(
+            f"UPDATE library_categories SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?",
+            (*fields.values(), category_id)
+        ).rowcount
+    if not changed:
+        raise HTTPException(404, "Pasta não encontrada.")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/library/categories/{category_id}", dependencies=[Depends(require_admin)])
+def delete_library_category(category_id: str) -> dict[str, Any]:
+    """Apaga a pasta e todas as artes dela (com os arquivos). Os lados não saem."""
+    if category_id in LIBRARY_SIDES:
+        raise HTTPException(400, "Os lados Grátis e Premium são fixos.")
+    with db() as con:
+        if not con.execute("SELECT 1 FROM library_categories WHERE id=?", (category_id,)).fetchone():
+            raise HTTPException(404, "Pasta não encontrada.")
+        arts = con.execute("SELECT id, file_path FROM library_arts WHERE category_id=?", (category_id,)).fetchall()
+        con.execute("DELETE FROM library_arts WHERE category_id=?", (category_id,))
+        con.execute("DELETE FROM library_categories WHERE id=?", (category_id,))
+    for art in arts:
+        remove_library_files(art["id"], art["file_path"])
+    return {"ok": True, "deleted_arts": len(arts)}
+
+
+@app.post("/api/admin/library/arts", dependencies=[Depends(require_admin)])
+async def upload_library_arts(
+    category_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> dict[str, Any]:
+    """Envio de várias artes de uma vez. O nome da arte é o nome do arquivo."""
+    with db() as con:
+        folder = con.execute("SELECT parent_id FROM library_categories WHERE id=?", (category_id,)).fetchone()
+    if not folder:
+        raise HTTPException(404, "Pasta não encontrada.")
+    if not folder["parent_id"]:
+        raise HTTPException(400, "Envie as artes para uma pasta, não direto no lado.")
+    saved, skipped = 0, []
+    for upload in files:
+        filename = upload.filename or ""
+        ext = Path(filename).suffix.lower()
+        if ext not in LIBRARY_EXTS:
+            skipped.append(filename)
+            continue
+        aid = uuid.uuid4().hex[:12]
+        dest = LIBRARY_DIR / f"{aid}{ext}"
+        with dest.open("wb") as f:
+            while chunk := await upload.read(1024 * 1024):
+                f.write(chunk)
+        try:
+            with Image.open(dest) as im:
+                im.verify()  # extensão de imagem, mas o conteúdo não é
+        except Exception:
+            dest.unlink(missing_ok=True)
+            skipped.append(filename)
+            continue
+        with db() as con:
+            con.execute(
+                "INSERT INTO library_arts (id,created_at,category_id,name,file_path) VALUES(?,?,?,?,?)",
+                (aid, time.time(), category_id, Path(filename).stem.strip() or "Sem título", str(dest))
+            )
+        saved += 1
+    return {"ok": True, "saved": saved, "skipped": skipped}
+
+
+@app.delete("/api/admin/library/arts/{art_id}", dependencies=[Depends(require_admin)])
+def delete_library_art(art_id: str) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute("SELECT file_path FROM library_arts WHERE id=?", (art_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Arte não encontrada.")
+        con.execute("DELETE FROM library_arts WHERE id=?", (art_id,))
+    remove_library_files(art_id, row["file_path"])
+    return {"ok": True}
+
+
+@app.post("/api/premium/subscribe")
+def subscribe_premium(
+    request: Request, payload: dict[str, Any] | None = None,
+    customer: dict[str, Any] = Depends(require_customer),
+) -> dict[str, Any]:
+    """Gera o pedido do plano premium. O acesso só é liberado quando o
+    pagamento é aprovado (finish_paid_order)."""
+    check_order_rate_limit(customer)
+    cfg = digital_cfg()
+    price = round(float(cfg.get("premium_price_month") or 0), 2)
+    if price <= 0:
+        raise HTTPException(503, "Preço do premium não configurado.")
+    days = int(cfg.get("premium_days") or 30)
+    oid = uuid.uuid4().hex[:12]
+    order_number = next_order_number()
+    data: dict[str, Any] = {
+        "sale_type": "PREMIUM_SUB",
+        "customer": {"name": customer["full_name"], "email": customer["email"], "whatsapp": customer["phone"]},
+        "customer_id": customer["id"],
+        "premium_days": days,
+        "total": price,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "tracking": clean_tracking((payload or {}).get("tracking"), request),
+    }
+    for attempt in range(2):
+        data["order_number"] = order_number
+        try:
+            with db() as con:
+                con.execute(
+                    """INSERT INTO orders
+                       (id,order_number,created_at,customer_name,customer_email,
+                        customer_whatsapp,sale_type,status,payment_status,total,
+                        folder_path,production_drop_path,data_json,customer_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        oid, order_number, time.time(), customer["full_name"], customer["email"],
+                        customer["phone"], "PREMIUM_SUB", "AGUARDANDO_PAGAMENTO", "PENDING", price,
+                        "", None, json.dumps(data, ensure_ascii=False), customer["id"]
+                    )
+                )
+            break
+        except sqlite3.IntegrityError:
+            # Mesmo caso do create_order: número repetido no mesmo segundo.
+            if attempt:
+                raise
+            order_number = f"{order_number}-{uuid.uuid4().hex[:4]}"
+    return {"ok": True, "id": oid, "order_number": order_number, "total": price, "days": days}
+
+
 @app.post("/api/ai/generate")
-def ai_generate(payload: dict, request: Request):
+def ai_generate(payload: dict[str, Any], customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    """Cada geração custa na conta da OpenAI: só com login, e com limite por
+    minuto e por dia em cada conta (ai_daily_limit no config.json)."""
     prompt = str(payload.get("prompt", "")).strip()
     if not prompt:
         raise HTTPException(400, "Descreva a arte.")
     if len(prompt) > 500:
         raise HTTPException(400, "Descrição muito longa (máximo 500 caracteres).")
 
-    check_ai_rate_limit(request.client.host if request.client else "unknown")
-
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(503, "IA não configurada no .env.")
+
+    minute_key = f"ai:{customer['id']}"
+    check_rate_limit(minute_key, 6, 60, "Muitas gerações por IA em pouco tempo. Aguarde um minuto.", record=False)
+    daily = int(CONFIG.get("ai_daily_limit") or 20)
+    check_rate_limit(f"ai-day:{customer['id']}", daily, 86400,
+                     f"Você chegou ao limite de {daily} artes por IA hoje. Tente de novo amanhã.")
+    record_hit(minute_key)
 
     try:
         from openai import OpenAI
@@ -784,10 +2106,11 @@ def ai_generate(payload: dict, request: Request):
             background="transparent",
         )
 
+        if not response.data:
+            raise RuntimeError("A API não retornou a imagem.")
+
         item = response.data[0]
-        image_bytes = None
-        if getattr(item, "b64_json", None):
-            image_bytes = base64.b64decode(item.b64_json)
+        image_bytes = base64.b64decode(item.b64_json) if item.b64_json else None
 
         if not image_bytes:
             raise RuntimeError("A API não retornou a imagem.")
@@ -803,10 +2126,20 @@ def ai_generate(payload: dict, request: Request):
 
 @app.post("/api/orders")
 async def create_order(
+    request: Request,
     order_json: str = Form(...),
     design: UploadFile | None = File(None),
     design_back: UploadFile | None = File(None),
-):
+    design_sleeve_right: UploadFile | None = File(None),
+    design_sleeve_left: UploadFile | None = File(None),
+    placement_front: UploadFile | None = File(None),
+    placement_back: UploadFile | None = File(None),
+    buyer: dict[str, Any] = Depends(require_customer),
+) -> dict[str, Any]:
+    # Dono do pedido (aparece em "Minha conta"). Antes o login era exigido só
+    # no navegador: qualquer um podia mandar pedidos com arquivos enormes
+    # direto pra API e encher o disco do servidor.
+    check_order_rate_limit(buyer)
     try:
         data = json.loads(order_json)
     except json.JSONDecodeError:
@@ -822,11 +2155,22 @@ async def create_order(
         "DTF_ONLY", "DTF_PLUS_SHIRT", "FINISHED_SHIRT", "DIGITAL_ART"
     }:
         raise HTTPException(400, "Modalidade inválida.")
+    if sale_type in DISABLED_SALE_TYPES:
+        raise HTTPException(400, "Essa modalidade está desativada no momento.")
+    if not SLEEVES_ENABLED and any(u is not None and u.filename for u in (design_sleeve_right, design_sleeve_left)):
+        raise HTTPException(400, "Estampa na manga está desativada no momento.")
 
     order_number = next_order_number()
     oid = uuid.uuid4().hex[:12]
     folder = ORDERS_DIR / f"{order_number}__{safe_name(name)}"
-    folder.mkdir(parents=True, exist_ok=False)
+    try:
+        folder.mkdir(parents=True)
+    except FileExistsError:
+        # Pasta que sobrou de um pedido apagado do banco, ou outro pedido com
+        # o mesmo nome no mesmo segundo: antes isso virava erro 500.
+        order_number = f"{order_number}-{oid[:4]}"
+        folder = ORDERS_DIR / f"{order_number}__{safe_name(name)}"
+        folder.mkdir(parents=True)
 
     digital_artwork_row = None
     if sale_type == "DIGITAL_ART":
@@ -846,26 +2190,35 @@ async def create_order(
     try:
         if design is not None and design.filename:
             ext = Path(design.filename).suffix.lower() or ".png"
-            design_path = folder / f"ARTE_PRODUCAO{ext}"
-            with design_path.open("wb") as f:
-                while chunk := await design.read(1024 * 1024):
-                    f.write(chunk)
+            # Na camiseta o "design" é a frente; no Somente DTF é a chapa.
+            front_name = "ARTE_PRODUCAO" if sale_type == "DTF_ONLY" else "ARTE_PRODUCAO_FRENTE"
+            design_path = folder / f"{front_name}{ext}"
+            await save_upload(design, design_path)
 
             data["production_art"] = {
                 "file": design_path.name,
                 **image_info(design_path),
             }
 
-        if design_back is not None and design_back.filename:
-            ext_b = Path(design_back.filename).suffix.lower() or ".png"
-            design_back_path = folder / f"ARTE_PRODUCAO_COSTAS{ext_b}"
-            with design_back_path.open("wb") as f:
-                while chunk := await design_back.read(1024 * 1024):
-                    f.write(chunk)
-
-            data["production_art_back"] = {
-                "file": design_back_path.name,
-                **image_info(design_back_path),
+        # Verso e mangas: cada arte vira um arquivo ARTE_PRODUCAO_* na pasta
+        # do pedido (o prefixo faz ela ir junto pra pasta de produção).
+        # POSICAO_* é a foto da camisa com a arte no lugar, pra quem estampa.
+        extra_arts = (
+            (design_back, "ARTE_PRODUCAO_COSTAS", "production_art_back"),
+            (design_sleeve_right, "ARTE_PRODUCAO_MANGA_DIREITA", "production_art_sleeve_right"),
+            (design_sleeve_left, "ARTE_PRODUCAO_MANGA_ESQUERDA", "production_art_sleeve_left"),
+            (placement_front, "POSICAO_FRENTE", "placement_front"),
+            (placement_back, "POSICAO_COSTAS", "placement_back"),
+        )
+        for upload, base_name, data_key in extra_arts:
+            if upload is None or not upload.filename:
+                continue
+            ext_x = Path(upload.filename).suffix.lower() or ".png"
+            art_path = folder / f"{base_name}{ext_x}"
+            await save_upload(upload, art_path)
+            data[data_key] = {
+                "file": art_path.name,
+                **image_info(art_path),
             }
 
         if digital_artwork_row:
@@ -883,6 +2236,8 @@ async def create_order(
                     "Arquivo original da arte digital não encontrado em disco."
                 )
 
+        data["tracking"] = clean_tracking(data.get("tracking"), request)
+        data["total"] = calc_order_total(sale_type, data, digital_artwork_row)
         data["order_number"] = order_number
         data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         data["status"] = "AGUARDANDO_PAGAMENTO"
@@ -900,18 +2255,19 @@ async def create_order(
                     """INSERT INTO orders
                        (id,order_number,created_at,customer_name,customer_email,
                         customer_whatsapp,sale_type,status,payment_status,total,
-                        folder_path,production_drop_path,data_json)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        folder_path,production_drop_path,data_json,customer_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         oid, order_number, time.time(), name,
                         customer.get("email", ""), customer.get("whatsapp", ""),
                         sale_type, "AGUARDANDO_PAGAMENTO", "PENDING", total,
-                        str(folder), None, json.dumps(data, ensure_ascii=False)
+                        str(folder), None, json.dumps(data, ensure_ascii=False),
+                        buyer["id"]
                     )
                 )
         except sqlite3.IntegrityError:
             # Dois pedidos criados no mesmíssimo segundo podem colidir
-            # no número (order_number é gerado por contagem, não é
+            # no número (order_number é calculado antes do INSERT, não é
             # atômico). Antes isso derrubava o pedido com um erro cru;
             # agora tenta de novo com um sufixo, sem perder a arte já
             # salva em disco.
@@ -925,13 +2281,14 @@ async def create_order(
                     """INSERT INTO orders
                        (id,order_number,created_at,customer_name,customer_email,
                         customer_whatsapp,sale_type,status,payment_status,total,
-                        folder_path,production_drop_path,data_json)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        folder_path,production_drop_path,data_json,customer_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         oid, order_number, time.time(), name,
                         customer.get("email", ""), customer.get("whatsapp", ""),
                         sale_type, "AGUARDANDO_PAGAMENTO", "PENDING", total,
-                        str(folder), None, json.dumps(data, ensure_ascii=False)
+                        str(folder), None, json.dumps(data, ensure_ascii=False),
+                        buyer["id"]
                     )
                 )
 
@@ -942,7 +2299,8 @@ async def create_order(
             "ok": True,
             "id": oid,
             "order_number": order_number,
-            "status": "AGUARDANDO_PAGAMENTO"
+            "status": "AGUARDANDO_PAGAMENTO",
+            "total": total
         }
     except Exception:
         shutil.rmtree(folder, ignore_errors=True)
@@ -950,7 +2308,8 @@ async def create_order(
 
 
 @app.get("/api/orders", dependencies=[Depends(require_admin)])
-def list_orders():
+def list_orders() -> list[dict[str, Any]]:
+    cancel_stale_orders()
     with db() as con:
         rows = con.execute(
             """SELECT id,order_number,created_at,customer_name,sale_type,status,
@@ -958,7 +2317,7 @@ def list_orders():
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
 
-    result = []
+    result: list[dict[str, Any]] = []
     for row in rows:
         d = dict(row)
         try:
@@ -970,20 +2329,12 @@ def list_orders():
 
 
 @app.post("/api/orders/{order_id}/mark-paid", dependencies=[Depends(require_admin)])
-def mark_paid(order_id: str):
+def mark_paid(order_id: str) -> dict[str, Any]:
     row = load_order(order_id)
     if not row:
         raise HTTPException(404, "Pedido não encontrado.")
 
-    if row["payment_status"] != "PAID":
-        with db() as con:
-            con.execute(
-                """UPDATE orders SET payment_status='PAID',
-                   status='PAGAMENTO_APROVADO' WHERE id=?""",
-                (order_id,)
-            )
-
-    path = release_paid_order_to_production(order_id)
+    path = mark_order_paid(order_id)
 
     return {
         "ok": True,
@@ -993,13 +2344,68 @@ def mark_paid(order_id: str):
     }
 
 
+@app.post("/api/orders/{order_id}/mark-ready", dependencies=[Depends(require_admin)])
+def mark_ready(order_id: str) -> dict[str, Any]:
+    """Última etapa que o cliente vê em "Minha conta": pedido pronto."""
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["sale_type"] == "PREMIUM_SUB":
+        raise HTTPException(400, "Pedido de premium não tem produção.")
+    if row["payment_status"] != "PAID":
+        raise HTTPException(400, "Pedido ainda não está pago.")
+    with db() as con:
+        con.execute("UPDATE orders SET status='PRONTO' WHERE id=?", (order_id,))
+    return {"ok": True, "status": "PRONTO"}
+
+
+@app.get("/api/admin/orders/{order_id}/files", dependencies=[Depends(require_admin)])
+def download_order_files(order_id: str):
+    """Arquivos do pedido num zip, baixados pelo Admin. Com o site num
+    servidor, orders/, PRODUCAO_PAGA/ e SomenteDTFs/ ficam lá, não no PC
+    do RIP: é por aqui que as artes chegam na produção."""
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["sale_type"] == "PREMIUM_SUB":
+        raise HTTPException(400, "Pedido de premium não tem arquivos.")
+    base = f"{row['order_number']}__{safe_name(row['customer_name'])}"
+    files: list[Path] = []
+    # A pasta de produção (quando pago) repete os arquivos e soma o LEIA-ME.
+    for folder in (row["folder_path"], row["production_drop_path"]):
+        if folder and Path(folder).is_dir():
+            files += [p for p in Path(folder).iterdir() if p.is_file()]
+    report = SOMENTE_DTF_DIR / base / "RELATORIO_ARTES.txt"
+    if report.is_file():
+        files.append(report)
+    if not files:
+        raise HTTPException(404, "Os arquivos deste pedido não estão mais no servidor.")
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp.close()
+    names: set[str] = set()
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as z:  # PNG/JPG já vêm comprimidos
+        for p in files:
+            if p.name not in names:
+                names.add(p.name)
+                z.write(p, p.name)
+    return FileResponse(
+        tmp.name, media_type="application/zip", filename=f"{base}.zip",
+        background=BackgroundTask(os.unlink, tmp.name)  # apaga o zip depois de enviar
+    )
+
+
 @app.post("/api/payments/webhook")
 def payment_webhook(
-    payload: dict,
+    payload: dict[str, Any],
     x_webhook_secret: str | None = Header(None)
-):
+) -> dict[str, Any]:
     expected = str(CONFIG.get("payment", {}).get("webhook_secret", ""))
-    if not expected or x_webhook_secret != expected:
+    if not expected or expected == "TROQUE-ESTA-CHAVE":
+        raise HTTPException(
+            500,
+            "payment.webhook_secret ainda não foi trocado em config.json. Configure antes de aceitar pagamentos."
+        )
+    if not x_webhook_secret or not secrets.compare_digest(x_webhook_secret, expected):
         raise HTTPException(401, "Webhook não autorizado.")
 
     order_id = str(payload.get("order_id", "")).strip()
@@ -1012,17 +2418,173 @@ def payment_webhook(
     if not row:
         raise HTTPException(404, "Pedido não encontrado.")
 
-    with db() as con:
-        con.execute(
-            """UPDATE orders SET payment_status='PAID',
-               status='PAGAMENTO_APROVADO' WHERE id=?""",
-            (order_id,)
-        )
-
-    path = release_paid_order_to_production(order_id)
+    path = mark_order_paid(order_id)
     return {"ok": True, "production_drop_path": path}
 
 
+@app.post("/api/me/orders/{order_id}/checkout")
+def checkout_order(order_id: str, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    """Link de pagamento do Mercado Pago pro pedido do cliente. Vale também
+    pra quem desistiu e volta depois pelo "Pagar agora" em Minha conta."""
+    if not mp_token():
+        raise HTTPException(503, "O pagamento online ainda não está configurado. Fale com a loja.")
+    cancel_stale_orders()
+    row = load_order(order_id)
+    if not row or not order_is_customers(row, customer):
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["payment_status"] == "PAID":
+        raise HTTPException(400, "Este pedido já está pago.")
+    if row["status"] == "CANCELADO":
+        raise HTTPException(400, "Este pedido foi cancelado por falta de pagamento em 24 horas. Faça um pedido novo.")
+    # O link vence junto com o pedido: ninguém paga um pedido já cancelado.
+    expires_at = time.strftime("%Y-%m-%dT%H:%M:%S.000-00:00",
+                               time.gmtime(float(row["created_at"]) + unpaid_limit_seconds()))
+    preference: dict[str, Any] = {
+        "items": [{
+            "id": row["order_number"],
+            "title": f"{CONFIG.get('store_name') or 'Ripfire Studio'} - pedido {row['order_number']}",
+            "quantity": 1,
+            "unit_price": round(float(row["total"]), 2),
+            "currency_id": "BRL",
+        }],
+        "external_reference": row["id"],  # é por ele que o pagamento acha o pedido
+        "expires": True,
+        "expiration_date_to": expires_at,
+    }
+    base = site_url()
+    if base:
+        back = f"{base}/?mp=retorno"
+        preference |= {
+            "back_urls": {"success": back, "pending": back, "failure": back},
+            "auto_return": "approved",
+            "notification_url": f"{base}/api/payments/mercadopago",
+        }
+    res = mp_request("POST", "/checkout/preferences", preference)
+    # Credencial de teste (TEST-...) paga no ambiente de testes do Mercado Pago.
+    url = (res.get("sandbox_init_point") if mp_token().startswith("TEST-") else None) or res.get("init_point")
+    if not url:
+        raise HTTPException(502, "O Mercado Pago não devolveu o link de pagamento.")
+    return {"url": url}
+
+
+@app.post("/api/me/orders/{order_id}/sync-payment")
+def sync_order_payment(order_id: str, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    """Confere no Mercado Pago se o pedido foi pago: na volta do pagamento e
+    no "Já paguei, verificar" (no PC o Mercado Pago não consegue avisar o site)."""
+    check_rate_limit(f"sync:{customer['id']}", 20, 60, "Aguarde um pouco antes de verificar de novo.")
+    row = load_order(order_id)
+    if not row or not order_is_customers(row, customer):
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["payment_status"] != "PAID" and mp_token():
+        query = urllib.parse.urlencode({"external_reference": order_id, "sort": "date_created", "criteria": "desc"})
+        for payment in mp_request("GET", f"/v1/payments/search?{query}").get("results") or []:
+            if apply_mp_payment(payment):
+                break
+        row = load_order(order_id) or row
+    # Total e número vão junto: o site registra a compra no GA/Pixel (se o cliente permitiu).
+    return {"payment_status": row["payment_status"], "status": row["status"],
+            "order_number": row["order_number"], "total": row["total"]}
+
+
+@app.post("/api/payments/mercadopago")
+def mercadopago_webhook(request: Request, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Aviso de pagamento do Mercado Pago (notification_url da preferência).
+    A rota é pública, então do aviso só sai o id: o pagamento é buscado na
+    API com o token da loja antes de liberar qualquer coisa. Responde 200 pra
+    tudo que não interessa; erro só quando vale o Mercado Pago tentar de novo."""
+    q, body = request.query_params, payload or {}
+    data = body.get("data")
+    data_id = data.get("id") if isinstance(data, dict) else None
+    kind = q.get("type") or q.get("topic") or body.get("type") or body.get("topic")
+    payment_id = str(q.get("data.id") or q.get("id") or data_id or "")
+    if kind != "payment" or not payment_id.isdigit() or not mp_token():
+        return {"ok": True, "ignored": True}
+    # missing_ok: o "simular notificação" do painel manda um id que não existe.
+    payment = mp_request("GET", f"/v1/payments/{payment_id}", missing_ok=True)
+    return {"ok": True, "paid": apply_mp_payment(payment)}
+
+
+def plaintext_admin_users() -> list[str]:
+    logins = [(CONFIG.get("admin_user"), CONFIG.get("admin_key"))]
+    logins += [(a.get("user"), a.get("key")) for a in CONFIG.get("admins") or []]
+    return [str(u) for u, k in logins if u and k and not str(k).startswith((PWD_SCHEME + "$", "TROQUE-"))]
+
+
+# ---------- Rotas fechadas por padrão ----------
+# Toda rota exige login (Admin ou cliente), menos as desta lista. Rota nova que
+# esqueceu o Depends(require_admin/require_customer) e não está aqui faz o
+# servidor recusar a subir, dizendo qual é: nada fica público sem querer.
+PUBLIC_ROUTES = {
+    # Páginas do site
+    ("GET", "/"), ("GET", "/favicon.ico"), ("GET", "/privacidade"), ("GET", "/termos"),
+    ("GET", "/reembolso"), ("GET", "/lgpd"),
+    # Vitrine (o que qualquer visitante vê)
+    ("GET", "/api/config"), ("GET", "/api/artworks"), ("GET", "/api/shirt-mockups"), ("GET", "/api/library"),
+    ("GET", "/api/library/categories/{category_id}/arts"), ("GET", "/api/library/arts/{art_id}/thumb"),
+    # Entrar, criar conta e sair (com limite de tentativas)
+    ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
+    # Pagamentos: conferidos pelo segredo do webhook ou consultando a API do Mercado Pago
+    ("POST", "/api/payments/webhook"), ("POST", "/api/payments/mercadopago"),
+    # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
+    ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
+}
+AUTH_DEPENDENCIES = {"require_admin", "require_customer"}
+
+
+def unprotected_routes() -> list[str]:
+    from fastapi.routing import APIRoute
+
+    def names(dep: Any) -> set[str]:
+        out: set[str] = set()
+        for sub in dep.dependencies:
+            out.add(getattr(sub.call, "__name__", ""))
+            out |= names(sub)
+        return out
+
+    found = []
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or names(route.dependant) & AUTH_DEPENDENCIES:
+            continue
+        for method in route.methods:
+            if (method, route.path) not in PUBLIC_ROUTES:
+                found.append(f"{method} {route.path}")
+    return found
+
+
+if unprotected_routes():
+    raise RuntimeError("Rota sem login e fora de PUBLIC_ROUTES: " + ", ".join(unprotected_routes())
+                       + ". Adicione Depends(require_admin/require_customer) ou, se for pública mesmo, inclua em PUBLIC_ROUTES.")
+
+
+if __name__ == "__main__" and "--hash-senha" in sys.argv:
+    # python app.py --hash-senha → pede a senha (sem mostrar na tela) e imprime
+    # o hash pra colar no "admin_key" (ou "key" de "admins") do config.json.
+    import getpass
+    first = getpass.getpass("Nova senha do admin: ")
+    if len(first) < 12:
+        sys.exit("Use pelo menos 12 caracteres na senha do admin.")
+    if getpass.getpass("Repita a senha: ") != first:
+        sys.exit("As senhas não conferem.")
+    print("\nCole no config.json (entre aspas):\n" + hash_password(first))
+    sys.exit(0)
+
+if __name__ == "__main__" and "--restaurar" in sys.argv:
+    args = sys.argv[sys.argv.index("--restaurar") + 1:]
+    if not args:
+        print("Uso: python app.py --restaurar <arquivo .db>\nBackups disponíveis (do mais novo):")
+        for b in list_backups()[:15]:
+            print("  " + str(b))
+        sys.exit(0)
+    restore_database(Path(args[0]))
+    sys.exit(0)
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8787)
+    if BACKUP_CFG.get("enabled", True):
+        threading.Thread(target=backup_loop, daemon=True).start()
+    if plaintext_admin_users():
+        print("[aviso] Senha de admin em texto no config.json (" + ", ".join(plaintext_admin_users()) + ")."
+              " Gere o hash com: python app.py --hash-senha")
+    # No PC fica em 127.0.0.1:8787. No servidor também: quem recebe o público
+    # é o nginx, que repassa pra cá (HOST e PORT mudam pelo .env se precisar).
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8787")))

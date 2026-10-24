@@ -3,23 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Ripfire Studio Local</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=13">
+  <title>Ripfire Studio</title>
+  <link rel="icon" type="image/png" href="/static/img/logo.png">
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
+  <link rel="stylesheet" href="/static/styles.css?v=37">
 </head>
 <body class="is-home">
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
+<div id="a11yLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<!-- Aviso de cookies cedo na ordem do Tab (a posição na tela é fixa, embaixo). -->
+<div id="cookieBanner" class="cookie-banner" role="region" aria-label="Cookies e privacidade" hidden>
+  <div class="cookie-text">
+    <b>Cookies e privacidade</b>
+    <p>Guardamos no seu navegador o necessário para manter você conectado. O login com Google usa cookies do Google e só é ativado se você permitir. <span id="cookieTrackNote"></span> <a href="/privacidade#cookies" target="_blank">Saiba mais</a></p>
+    <!-- Cada linha opcional só aparece se o serviço estiver configurado no servidor (initConsent). -->
+    <div id="cookieDetails" class="cookie-details" hidden>
+      <label class="check"><input type="checkbox" checked disabled> <span><b>Necessários</b> · login e preferências do site (sempre ativos)</span></label>
+      <label class="check" id="cookieRow_google"><input type="checkbox" id="cookie_google"> <span><b>Login com Google</b> · carrega o serviço do Google, que grava cookies próprios</span></label>
+      <label class="check" id="cookieRow_analytics"><input type="checkbox" id="cookie_analytics"> <span><b>Estatística</b> · Google Analytics: quantas pessoas visitam e quais páginas usam, para melhorar o site</span></label>
+      <label class="check" id="cookieRow_marketing"><input type="checkbox" id="cookie_marketing"> <span><b>Marketing</b> · Pixel da Meta (Facebook/Instagram): mede e direciona nossos anúncios</span></label>
+    </div>
+  </div>
+  <div class="cookie-actions">
+    <button type="button" id="cookieCustomize" class="btn-line">Personalizar</button>
+    <button type="button" id="cookieSave" class="btn-line" hidden>Salvar escolhas</button>
+    <button type="button" id="cookieReject" class="primary">Só necessários</button>
+    <button type="button" id="cookieAccept" class="primary">Aceitar todos</button>
+  </div>
+</div>
+
 <header class="topbar">
   <img class="brand-logo" src="/static/img/logo.png" alt="Ripfire Studio">
   <nav>
     <button class="nav-btn active" data-tab="home">Início</button>
     <button class="nav-btn" data-tab="editor">Personalizar</button>
     <button class="nav-btn" data-tab="digital">Artes digitais</button>
+    <button type="button" id="navAccount" class="nav-account"><span id="navAvatar" class="nav-avatar" hidden></span><span id="navAccountLabel">Entrar</span></button>
     <button class="nav-btn" data-tab="admin" hidden>Admin</button>
   </nav>
 </header>
-<main>
+<main id="main" tabindex="-1">
+  <h1 class="sr-only">Ripfire Studio: camisetas e DTF personalizados</h1>
   <section id="home" class="tab active">
     <div class="hero">
       <div>
@@ -32,56 +56,63 @@
 
   <section id="editor" class="tab">
     <div class="editor-layout" id="editorLayout">
-      <aside class="panel">
+      <section class="panel">
         <h2>Tipo de Produto</h2>
-        <label>Modalidade</label>
+        <label for="saleType">Modalidade</label>
         <select id="saleType">
           <option value="DTF_ONLY">Somente DTF</option>
-          <option value="DTF_PLUS_SHIRT">DTF + Camiseta</option>
+          <!-- Desativado por enquanto. Para reativar, tire este comentário e remova
+               "DTF_PLUS_SHIRT" de DISABLED_SALE_TYPES no app.py.
+          <option value="DTF_PLUS_SHIRT">DTF + Camiseta</option> -->
           <option value="FINISHED_SHIRT">Camiseta pronta</option>
         </select>
         <div id="shirtOptions" class="shirt-only">
-          <label>Modelo</label>
-          <div id="shirtModelTabs" class="model-tabs"></div>
-          <label>Cor</label><select id="shirtColor"></select>
-          <label>Quantidades por tamanho</label><div id="sizeGrid"></div>
-        </div>
-        <div class="shirt-only">
-          <label>Quantidade de DTF</label><input id="dtfQty" type="number" min="1" value="1">
-          <label>Largura final da arte (cm)</label><input id="designWidthCm" type="number" min="2" max="58.5" step="0.5" value="28">
+          <label id="modelLabel">Modelo</label>
+          <div id="shirtModelTabs" class="model-tabs" role="group" aria-labelledby="modelLabel"></div>
+          <label for="shirtColor">Cor</label><select id="shirtColor"></select>
+          <label id="sizeLabel">Quantidades por tamanho</label><small class="size-hint" id="sizeHint">Clique no tamanho pra ver a área máxima de impressão.</small><div id="sizeGrid" role="group" aria-labelledby="sizeLabel" aria-describedby="sizeHint"></div>
         </div>
         <div class="price-card"><span>Total estimado</span><strong id="priceTotal">R$ 0,00</strong></div>
-      </aside>
+      </section>
 
       <section class="workspace shirt-only" id="shirtWorkspace">
         <div class="toolbar">
           <div id="sideTabs" class="side-tabs">
             <button type="button" class="side-tab active" data-side="FRONT">Frente</button>
             <button type="button" class="side-tab" data-side="BACK">Verso</button>
+            <!-- Mangas desativadas por enquanto. Para reativar, tire este comentário e
+                 mude SLEEVES_ENABLED para True no app.py.
+            <button type="button" class="side-tab" data-side="SLEEVE_R">Manga direita</button>
+            <button type="button" class="side-tab" data-side="SLEEVE_L">Manga esquerda</button> -->
           </div>
           <button id="deleteSelected">Excluir</button><button id="centerSelected">Centralizar</button><button id="bringFront">Trazer à frente</button>
           <span>Arraste a arte pra mover. Clique nela pra selecionar: ⟳ no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica o tamanho.</span>
         </div>
+        <div id="sleeveInfo" class="sleeve-info" hidden></div>
+        <div id="sizeInfo" class="size-info" hidden></div>
+        <p class="kbd-help" id="shirtKbdHelp">Pelo teclado: dê Tab até a área da estampa, <kbd>N</kbd> escolhe a próxima arte, setas movem (<kbd>Shift</kbd> move mais), <kbd>+</kbd>/<kbd>−</kbd> mudam o tamanho, <kbd>R</kbd> gira, <kbd>C</kbd> centraliza e <kbd>Delete</kbd> remove.</p>
         <div class="shirt-stage">
           <img id="shirtPhoto" class="shirt-photo" alt="" style="display:none">
           <svg id="shirtSvg" class="shirt-svg" viewBox="0 0 430 520" xmlns="http://www.w3.org/2000/svg"></svg>
           <div id="printArea">
-            <canvas id="designCanvas" width="420" height="480"></canvas>
+            <canvas id="designCanvas" width="420" height="480" tabindex="0" role="application" aria-roledescription="editor da estampa" aria-label="Área da estampa" aria-describedby="shirtKbdHelp"></canvas>
             <div id="shirtHandles" class="gang-handles" hidden>
               <button type="button" id="shirtHandleRotate" class="gh-handle gh-rotate" title="Girar 90°">⟳</button>
-              <div id="shirtHandleResize" class="gh-handle gh-resize" title="Esticar"></div>
+              <div id="shirtHandleResize" class="gh-handle gh-resize" title="Esticar" tabindex="0" role="button" aria-label="Esticar a arte: setas mudam largura e altura"></div>
             </div>
-            <div id="printAreaMove" class="print-area-move" title="Mover área de impressão">✥</div>
-            <div id="printAreaResize" class="mockup-box-resize" title="Redimensionar área de impressão"></div>
+            <div id="printAreaMove" class="print-area-move" title="Mover área de impressão" tabindex="0" role="button" aria-label="Mover a área de impressão: use as setas" hidden>✥</div>
+            <div id="printAreaResize" class="mockup-box-resize" title="Redimensionar área de impressão" tabindex="0" role="button" aria-label="Redimensionar a área de impressão: use as setas" hidden></div>
+            <div id="limitLabelW" class="limit-label limit-label-w" hidden></div>
+            <div id="limitLabelH" class="limit-label limit-label-h" hidden></div>
           </div>
         </div>
       </section>
 
-      <aside class="panel shirt-only" id="addArtPanel">
+      <section class="panel shirt-only" id="addArtPanel">
         <h2>Adicionar arte</h2>
-        <div class="tool"><label>Upload</label><input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp"></div>
-        <div class="tool"><label>Criar com IA</label><textarea id="aiPrompt" rows="4" placeholder="Descreva a estampa"></textarea><button id="generateAI">Gerar com IA</button><small id="aiStatus"></small></div>
-        <div class="tool"><label>Artes Ripfire</label><div id="catalogMini" class="catalog-mini"></div></div>
+        <div class="tool"><label for="uploadArt">Upload</label><input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp"></div>
+        <div class="tool"><label for="aiPrompt">Criar com IA</label><textarea id="aiPrompt" rows="4" placeholder="Descreva a estampa"></textarea><button id="generateAI">Gerar com IA</button><small id="aiStatus" role="status" aria-live="polite"></small></div>
+        <div class="tool"><label id="catLabel">Artes Ripfire</label><div id="catalogMini" class="catalog-mini" role="group" aria-labelledby="catLabel"></div></div>
         <hr>
         <h2>Cliente</h2>
         <div class="account-box">
@@ -89,13 +120,13 @@
           <button type="button" id="openAuthShirt" class="full">Entrar / Cadastrar</button>
           <button type="button" id="logoutBtnShirt" class="full" hidden>Sair da conta</button>
         </div>
-        <button id="checkoutBtn" class="primary full">Criar pedido</button><div id="checkoutStatus"></div>
-      </aside>
+        <button id="checkoutBtn" class="primary full">Criar pedido</button><div id="checkoutStatus" role="status" aria-live="polite"></div>
+      </section>
 
-      <aside class="panel gang-only" id="gangAddPanel" style="display:none">
+      <section class="panel gang-only" id="gangAddPanel" style="display:none">
         <h2>Adicionar imagem</h2>
         <div class="tool">
-          <label>Upload</label>
+          <label for="gangUpload">Upload</label>
           <div id="gangDrop" class="gang-drop">
             <input id="gangUpload" type="file" accept="image/png,image/jpeg,image/webp">
             <div class="gang-drop-empty">
@@ -108,16 +139,16 @@
             </div>
           </div>
         </div>
-        <div class="tool"><label>Criar com IA</label><textarea id="gangAiPrompt" rows="3" placeholder="Descreva a estampa"></textarea><button type="button" id="gangGenerateAI">Gerar com IA</button><small id="gangAiStatus"></small></div>
-        <div class="tool"><label>Artes Ripfire</label><div id="gangCatalogMini" class="catalog-mini"></div></div>
+        <div class="tool"><label for="gangAiPrompt">Criar com IA</label><textarea id="gangAiPrompt" rows="3" placeholder="Descreva a estampa"></textarea><button type="button" id="gangGenerateAI">Gerar com IA</button><small id="gangAiStatus" role="status" aria-live="polite"></small></div>
+        <div class="tool"><label id="gangCatLabel">Artes Ripfire</label><div id="gangCatalogMini" class="catalog-mini" role="group" aria-labelledby="gangCatLabel"></div></div>
         <div class="dims-row">
-          <div><label>Largura (cm)</label><input id="gangWidthCm" type="number" min="1" step="0.5" placeholder="Ex: 15"></div>
-          <div><label>Altura (cm)</label><input id="gangHeightCm" type="number" min="1" step="0.5" placeholder="—" disabled></div>
+          <div><label for="gangWidthCm">Largura (cm)</label><input id="gangWidthCm" type="number" min="1" step="0.5" placeholder="Ex: 15"></div>
+          <div><label for="gangHeightCm">Altura (cm)</label><input id="gangHeightCm" type="number" min="1" step="0.5" placeholder="—" disabled></div>
         </div>
-        <label>Quantidade</label><input id="gangQty" type="number" min="1" value="1">
+        <label for="gangQty">Quantidade</label><input id="gangQty" type="number" min="1" value="1">
         <button id="gangAddBtn" class="primary full">Adicionar ao arquivo</button>
-        <div id="gangAddStatus"></div>
-      </aside>
+        <div id="gangAddStatus" role="status" aria-live="polite"></div>
+      </section>
 
       <section class="workspace gang-only" id="gangWorkspace" style="display:none">
         <div class="toolbar gang-toolbar">
@@ -132,17 +163,18 @@
             <button id="gangReorganize">↻ Reorganizar</button>
           </div>
         </div>
+        <p class="kbd-help" id="gangKbdHelp">Pelo teclado: dê Tab até a chapa, <kbd>N</kbd> escolhe a próxima peça, setas movem 0,5 cm (<kbd>Shift</kbd> 5 cm), <kbd>+</kbd>/<kbd>−</kbd> mudam o tamanho, <kbd>R</kbd> gira, <kbd>H</kbd>/<kbd>V</kbd> invertem.</p>
         <p class="gang-hint">Arraste uma peça pra mover. Clique nela pra selecionar: ⟳ no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica. Shift+clique seleciona todas as peças entre duas peças; Ctrl+clique soma/remove uma peça da seleção; arrastar num espaço vazio desenha um quadrante de seleção. Com várias selecionadas, arraste qualquer uma pra mover o grupo junto.</p>
         <div class="gang-canvas-wrap">
           <div class="gang-corner"></div>
           <div id="gangRulerTop" class="gang-ruler-top"></div>
-          <div class="gang-scroll-row">
+          <div class="gang-scroll-row" tabindex="0" role="region" aria-label="Chapa de DTF (role para ver tudo)">
             <div id="gangRulerLeft" class="gang-ruler-left"></div>
             <div class="gang-scroll">
-              <canvas id="gangCanvas"></canvas>
+              <canvas id="gangCanvas" tabindex="0" role="application" aria-roledescription="chapa de DTF" aria-label="Chapa de DTF" aria-describedby="gangKbdHelp"></canvas>
               <div id="gangHandles" class="gang-handles" hidden>
                 <button type="button" id="gangHandleRotate" class="gh-handle gh-rotate" title="Girar 90°">⟳</button>
-                <div id="gangHandleResize" class="gh-handle gh-resize" title="Esticar"></div>
+                <div id="gangHandleResize" class="gh-handle gh-resize" title="Esticar" tabindex="0" role="button" aria-label="Esticar a peça: setas mudam largura e altura"></div>
               </div>
             </div>
           </div>
@@ -155,24 +187,94 @@
         </div>
       </section>
 
-      <aside class="panel gang-only" id="gangClientPanel" style="display:none">
+      <section class="panel gang-only" id="gangClientPanel" style="display:none">
         <h2>Cliente</h2>
         <div class="account-box">
           <p id="accountInfoGang" class="account-info">Você ainda não entrou com uma conta.</p>
           <button type="button" id="openAuthGang" class="full">Entrar / Cadastrar</button>
           <button type="button" id="logoutBtnGang" class="full" hidden>Sair da conta</button>
         </div>
-        <button id="checkoutBtnGang" class="primary full">Criar pedido de teste</button><div id="checkoutStatusGang"></div>
+        <button id="checkoutBtnGang" class="primary full">Criar pedido</button><div id="checkoutStatusGang" role="status" aria-live="polite"></div>
         <hr>
         <h2>Imagens (<span id="gangCount">0</span>)</h2>
         <div id="gangList" class="gang-list"></div>
-      </aside>
+      </section>
     </div>
   </section>
 
   <section id="digital" class="tab">
-    <div class="section-head"><div><div class="eyebrow">DOWNLOAD DIGITAL</div><h1>Artes Ripfire</h1></div></div>
-    <div id="digitalCatalog" class="catalog-grid"></div>
+    <div id="libraryPremium" class="lib-premium"></div>
+    <div id="libraryView"></div>
+  </section>
+
+  <section id="profile" class="tab">
+    <div class="profile-hero">
+      <div id="profileAvatar" class="profile-avatar"></div>
+      <div class="profile-who">
+        <span id="profilePremiumChip" class="pchip premium" hidden>★ PREMIUM</span>
+        <h1 id="profileName"></h1>
+        <p id="profileEmail"></p>
+      </div>
+      <div id="profileStats" class="profile-stats"></div>
+    </div>
+    <div id="profileNotice" role="status" aria-live="polite"></div>
+    <div id="profileTabs" class="profile-tabs">
+      <button type="button" data-pview="overview" class="active">Visão geral</button>
+      <button type="button" data-pview="orders">Meus pedidos</button>
+      <button type="button" data-pview="downloads">Meus downloads</button>
+      <button type="button" data-pview="premium">Premium</button>
+      <button type="button" data-pview="data">Meus dados</button>
+    </div>
+    <div id="profileLayout" class="profile-layout">
+      <div class="profile-main">
+        <section id="profileOrdersPanel" class="ppanel">
+          <div class="ppanel-head"><h2>Meus pedidos</h2><button type="button" id="profileOrdersMore" class="plink" data-pview="orders">Ver todos →</button></div>
+          <div id="profileOrders"></div>
+        </section>
+        <section id="profileDownloadsPanel" class="ppanel">
+          <div class="ppanel-head"><h2>Meus downloads</h2><button type="button" id="profileDownloadsMore" class="plink" data-pview="downloads">Ver todos →</button></div>
+          <div id="profileDownloads" class="p-dl-grid"></div>
+        </section>
+      </div>
+      <div class="profile-side">
+        <section id="profilePremium" class="premium-card"></section>
+        <section id="profileDataPanel" class="ppanel">
+          <div class="ppanel-head"><h2>Meus dados</h2></div>
+          <label for="pfName">Nome completo</label><input id="pfName" autocomplete="name">
+          <label for="pfEmail">E-mail</label><input id="pfEmail" readonly>
+          <label for="pfPhone">WhatsApp</label><input id="pfPhone" inputmode="numeric" maxlength="18" autocomplete="tel">
+          <div class="dims-row">
+            <div><label for="pfCep">CEP</label><input id="pfCep" inputmode="numeric" maxlength="9"></div>
+            <div><label for="pfNumber">Número</label><input id="pfNumber"></div>
+          </div>
+          <label for="pfDocument">CPF / CNPJ</label><input id="pfDocument" inputmode="numeric" maxlength="18">
+          <button type="button" id="pfSave" class="btn-grad full">Salvar alterações</button>
+          <div id="pfStatus" role="status" aria-live="polite"></div>
+          <button type="button" id="pfPasswordToggle" class="btn-line full">Trocar senha</button>
+          <div id="pfPasswordForm" class="pf-password" hidden>
+            <div id="pfCurrentWrap"><label for="pfCurrent">Senha atual</label><input id="pfCurrent" type="password" autocomplete="current-password"></div>
+            <label for="pfNew">Nova senha</label><input id="pfNew" type="password" autocomplete="new-password">
+            <label for="pfConfirm">Confirmar nova senha</label><input id="pfConfirm" type="password" autocomplete="new-password">
+            <button type="button" id="pfPasswordSave" class="btn-grad full">Salvar senha</button>
+            <div id="pfPassStatus" role="status" aria-live="polite"></div>
+          </div>
+          <div class="pf-privacy">
+            <h3>Privacidade e seus dados</h3>
+            <button type="button" id="pfExport" class="btn-line full">Baixar uma cópia dos meus dados</button>
+            <a class="btn-line full pf-link" href="/lgpd" target="_blank">Outras solicitações (LGPD)</a>
+            <button type="button" id="pfDeleteToggle" class="btn-line full danger">Excluir minha conta</button>
+            <div id="pfDeleteForm" class="pf-password" hidden>
+              <p class="small-note">Isso apaga sua conta, seus downloads e os pedidos não pagos, e não dá para desfazer. Pedidos pagos ficam guardados pelo prazo da lei fiscal. Um Premium ativo é perdido.</p>
+              <div id="pfDeletePassWrap"><label for="pfDeletePass">Sua senha</label><input id="pfDeletePass" type="password" autocomplete="current-password"></div>
+              <label for="pfDeleteConfirm">Digite EXCLUIR para confirmar</label><input id="pfDeleteConfirm" autocomplete="off">
+              <button type="button" id="pfDeleteSave" class="btn-line full danger">Excluir definitivamente</button>
+              <div id="pfDeleteStatus" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+          <button type="button" id="pfLogout" class="btn-line full danger">Sair da conta</button>
+        </section>
+      </div>
+    </div>
   </section>
 
   <section id="admin" class="tab">
@@ -181,28 +283,28 @@
       <section class="panel">
         <h2>Cadastrar arte</h2>
         <form id="artworkForm">
-          <label>Nome</label><input name="name" required>
-          <label>Categoria</label><input name="category" value="Streetwear">
-          <label>Preço digital</label><input name="digital_price" type="number" min="0" step="0.01" value="9.90">
+          <label for="artName">Nome</label><input id="artName" name="name" required>
+          <label for="artCategory">Categoria</label><input id="artCategory" name="category" value="Streetwear">
+          <label for="artPrice">Preço digital</label><input id="artPrice" name="digital_price" type="number" min="0" step="0.01" value="9.90">
           <label class="check"><input name="can_customize" type="checkbox" checked> Usar no personalizador</label>
           <label class="check"><input name="can_sell_digital" type="checkbox" checked> Vender arquivo digital</label>
-          <label>Arquivo</label><input name="artwork" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <label for="artFile">Arquivo</label><input id="artFile" name="artwork" type="file" accept="image/png,image/jpeg,image/webp" required>
           <button class="primary">Cadastrar</button>
-        </form><div id="adminArtStatus"></div>
+        </form><div id="adminArtStatus" role="status" aria-live="polite"></div>
       </section>
 
       <section class="panel">
         <h2>Foto de mockup da camiseta</h2>
         <p style="font-size:12px;color:var(--muted);margin:-8px 0 12px">Suba uma foto real do produto (sem estampa) pra cada modelo/cor. Quando existir, o editor usa a foto no lugar do desenho.</p>
         <form id="mockupForm">
-          <label>Modelo</label><select name="model_id" id="mockupModel"></select>
-          <label>Cor</label><select name="color" id="mockupColor"></select>
-          <label>Lado</label>
+          <label for="mockupModel">Modelo</label><select name="model_id" id="mockupModel"></select>
+          <label for="mockupColor">Cor</label><select name="color" id="mockupColor"></select>
+          <label for="mockupSide">Lado</label>
           <select name="side" id="mockupSide">
             <option value="FRONT">Frente</option>
             <option value="BACK">Verso</option>
           </select>
-          <label>Foto</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <label for="mockupPhoto">Foto</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
           <div class="mockup-preview" id="mockupPreviewWrap" style="display:none">
             <img id="mockupPreviewImg" alt="">
             <div id="mockupPreviewBox">
@@ -211,20 +313,52 @@
           </div>
           <small style="color:var(--muted)">Arraste o quadrado pra mover, ou o cantinho no canto inferior direito pra redimensionar.</small>
           <div class="dims-row">
-            <div><label>Área X (%)</label><input name="print_x" id="mockupX" type="number" min="0" max="100" value="30" step="0.5"></div>
-            <div><label>Área Y (%)</label><input name="print_y" id="mockupY" type="number" min="0" max="100" value="28" step="0.5"></div>
+            <div><label for="mockupX">Área X (%)</label><input name="print_x" id="mockupX" type="number" min="0" max="100" value="30" step="0.5"></div>
+            <div><label for="mockupY">Área Y (%)</label><input name="print_y" id="mockupY" type="number" min="0" max="100" value="28" step="0.5"></div>
           </div>
           <div class="dims-row">
-            <div><label>Largura (%)</label><input name="print_w" id="mockupW" type="number" min="1" max="100" value="40" step="0.5"></div>
-            <div><label>Altura (%)</label><input name="print_h" id="mockupH" type="number" min="1" max="100" value="45" step="0.5"></div>
+            <div><label for="mockupW">Largura (%)</label><input name="print_w" id="mockupW" type="number" min="1" max="100" value="40" step="0.5"></div>
+            <div><label for="mockupH">Altura (%)</label><input name="print_h" id="mockupH" type="number" min="1" max="100" value="45" step="0.5"></div>
           </div>
           <button class="primary full">Salvar mockup</button>
-        </form><div id="adminMockupStatus"></div>
+        </form><div id="adminMockupStatus" role="status" aria-live="polite"></div>
         <h2 style="margin-top:18px">Mockups cadastrados</h2>
         <div id="mockupsList" class="gang-list"></div>
       </section>
+
+      <section class="panel">
+        <h2>Biblioteca digital</h2>
+        <p style="font-size:12px;color:var(--muted);margin:-8px 0 12px">Os lados Grátis e Premium são fixos e já vêm com 8 pastas cada. Renomeie as pastas, crie outras e envie as artes. Elas aparecem na aba Artes digitais.</p>
+        <form id="libCategoryForm">
+          <label for="libCatName">Nova pasta</label><input id="libCatName" placeholder="Ex.: Academia" required>
+          <label for="libParent">Lado</label><select id="libParent"><option value="free">Grátis</option><option value="premium">Premium</option></select>
+          <button class="primary full" style="margin-top:12px">Criar pasta</button>
+        </form><div id="libCatStatus" role="status" aria-live="polite"></div>
+        <form id="libUploadForm" style="margin-top:18px">
+          <label for="libTarget">Enviar artes para</label><select id="libTarget"></select>
+          <label for="libFiles">Artes (pode escolher várias de uma vez)</label><input id="libFiles" type="file" multiple accept="image/png,image/jpeg,image/webp">
+          <button id="libUploadBtn" class="primary full" style="margin-top:12px">Enviar artes</button>
+        </form><div id="libUploadStatus" role="status" aria-live="polite"></div>
+        <h2 style="margin-top:18px">Pastas</h2>
+        <div id="libTree" class="lib-tree"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Backup dos dados</h2>
+        <p id="backupInfo" class="small-note">Contas, pedidos e solicitações LGPD são copiados sozinhos.</p>
+        <button type="button" id="backupNow" class="primary full">Fazer backup agora</button>
+        <div id="backupStatus" role="status" aria-live="polite"></div>
+        <div id="backupList" class="gang-list" style="margin-top:12px"></div>
+      </section>
       </div>
-      <section class="panel wide"><div class="section-head compact"><h2>Pedidos</h2><button id="refreshOrders">Atualizar</button></div><div id="ordersTable"></div></section>
+      <section class="panel wide"><div class="section-head compact"><h2>Pedidos</h2><button id="refreshOrders">Atualizar</button></div><div id="ordersTable"></div>
+        <div class="section-head compact lgpd-head"><h2>Solicitações LGPD</h2><button id="refreshLgpd">Atualizar</button></div>
+        <p class="small-note">Pedidos feitos pelo formulário /lgpd. Prazo de resposta: 15 dias.</p>
+        <div id="lgpdTable"></div>
+        <div class="section-head compact lgpd-head"><h2>Métricas</h2>
+          <select id="metricsDays" style="width:auto" aria-label="Período das métricas"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="90">90 dias</option></select></div>
+        <p class="small-note">Contagem própria e anônima (sem cookies): inclui quem recusou o Google Analytics e a Meta. Robôs conhecidos ficam de fora.</p>
+        <div id="metricsBox"></div></section>
     </div>
   </section>
 </main>
@@ -236,62 +370,81 @@
     <a href="https://wa.me/" target="_blank" rel="noopener">WhatsApp</a>
     <a href="https://www.ripfire.com.br/" target="_blank" rel="noopener">ripfire.com.br</a>
     <a href="https://www.ripfireclub.com.br/" target="_blank" rel="noopener">ripfireclub.com.br</a>
+    <a href="/termos" target="_blank">Termos de Serviço</a>
+    <a href="/privacidade" target="_blank">Política de Privacidade</a>
+    <a href="/reembolso" target="_blank">Trocas e Reembolso</a>
+    <a href="/lgpd" target="_blank">Seus dados (LGPD)</a>
+    <a href="#" id="cookiePrefsLink">Preferências de cookies</a>
   </div>
   <small>&copy; Ripfire</small>
 </footer>
 
 <dialog id="authModal">
-  <form method="dialog" class="modal-card auth-card">
-    <button class="close" value="cancel">×</button>
-    <h2>Entrar ou criar conta</h2>
-    <div id="googleBtnContainer"></div>
-    <button type="button" id="googleBtnFallback" class="google-btn" disabled title="Login com Google não configurado" hidden>
-      <span class="google-g">G</span> Continuar com Google <small>(indisponível)</small>
-    </button>
-    <div class="auth-divider"><span>ou</span></div>
-    <div class="auth-tabs">
-      <button type="button" class="auth-tab active" data-authtab="login">Entrar</button>
-      <button type="button" class="auth-tab" data-authtab="register">Cadastrar</button>
-    </div>
-    <div id="authLoginForm" class="auth-pane">
-      <input id="loginEmail" placeholder="E-mail" type="email" autocomplete="email">
-      <input id="loginPassword" placeholder="Senha" type="password" autocomplete="current-password">
-      <button type="button" id="loginSubmitBtn" class="primary full">Entrar</button>
-    </div>
-    <div id="authRegisterForm" class="auth-pane" hidden>
-      <input id="regName" placeholder="Nome completo" autocomplete="name">
-      <input id="regEmail" placeholder="E-mail" type="email" autocomplete="email">
-      <input id="regPassword" placeholder="Senha (mín. 6 caracteres)" type="password" autocomplete="new-password">
-      <input id="regPhone" placeholder="Telefone / WhatsApp (opcional)" autocomplete="tel" inputmode="numeric" maxlength="18">
-      <div class="dims-row">
-        <input id="regCep" placeholder="CEP (opcional)">
-        <input id="regNumber" placeholder="Número (opcional)">
+  <form method="dialog" class="auth-shell">
+    <button class="close auth-close" value="cancel" aria-label="Fechar">×</button>
+    <aside class="auth-brand">
+      <img class="auth-logo" src="/static/img/logo.png" alt="Ripfire Studio">
+      <h2>Sua conta<br><span>Ripfire</span></h2>
+      <ul class="auth-perks">
+        <li><b>Artes grátis</b> pra baixar e usar nas suas estampas</li>
+        <li><b>Premium</b> com coleções de animes, jogos, futebol e mais</li>
+        <li><b>Pedidos</b> de camisa e DTF direto pelo site</li>
+      </ul>
+      <small>Personalização sob demanda de camisetas e DTF's.</small>
+    </aside>
+    <div class="auth-main">
+      <div id="authGuest">
+        <h2 id="authTitle" class="auth-title">Bem-vindo de volta</h2>
+        <p id="authSubtitle" class="auth-subtitle">Entre para baixar artes e finalizar seus pedidos.</p>
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab active" data-authtab="login">Entrar</button>
+          <button type="button" class="auth-tab" data-authtab="register">Criar conta</button>
+        </div>
+        <div id="authGoogle">
+          <!-- Sem permissão o script do Google nem carrega: o clique aqui é o aceite. -->
+          <div id="googleConsent" class="google-consent" hidden>
+            <button type="button" id="googleConsentBtn" class="btn-line full">Continuar com Google</button>
+            <small>Ao continuar, você permite os cookies do Google usados nesse login.</small>
+          </div>
+          <div id="googleBtnContainer"></div>
+          <div class="auth-divider"><span>ou com e-mail</span></div>
+        </div>
+        <div id="authLoginForm" class="auth-pane">
+          <label class="sr-only" for="loginEmail">E-mail</label><input id="loginEmail" placeholder="E-mail" type="email" autocomplete="email">
+          <label class="sr-only" for="loginPassword">Senha</label><input id="loginPassword" placeholder="Senha" type="password" autocomplete="current-password">
+          <button type="button" id="loginSubmitBtn" class="primary full">Entrar</button>
+        </div>
+        <div id="authRegisterForm" class="auth-pane" hidden>
+          <label class="sr-only" for="regName">Nome completo</label><input id="regName" placeholder="Nome completo" autocomplete="name">
+          <label class="sr-only" for="regEmail">E-mail</label><input id="regEmail" placeholder="E-mail" type="email" autocomplete="email">
+          <label class="sr-only" for="regPassword">Senha (mínimo 8 caracteres)</label><input id="regPassword" placeholder="Senha (mín. 8 caracteres)" type="password" autocomplete="new-password">
+          <label class="sr-only" for="regPhone">Telefone ou WhatsApp (opcional)</label><input id="regPhone" placeholder="Telefone / WhatsApp (opcional)" autocomplete="tel" inputmode="numeric" maxlength="18">
+          <div class="dims-row">
+            <label class="sr-only" for="regCep">CEP (opcional)</label><input id="regCep" placeholder="CEP (opcional)">
+            <label class="sr-only" for="regNumber">Número do endereço (opcional)</label><input id="regNumber" placeholder="Número (opcional)">
+          </div>
+          <label class="sr-only" for="regDocument">CPF ou CNPJ (opcional)</label><input id="regDocument" placeholder="CPF ou CNPJ (opcional)" inputmode="numeric" maxlength="18">
+          <button type="button" id="registerSubmitBtn" class="primary full">Criar conta</button>
+        </div>
       </div>
-      <input id="regDocument" placeholder="CPF ou CNPJ (opcional)" inputmode="numeric" maxlength="18">
-      <button type="button" id="registerSubmitBtn" class="primary full">Criar conta</button>
+      <!-- Vale pro cadastro e pro Google (os dois criam conta): o aceite fica gravado em terms_accepted_at. -->
+      <small class="auth-legal">Ao criar a conta ou entrar com o Google, você concorda com os <a href="/termos" target="_blank">Termos de Serviço</a> e declara que leu a <a href="/privacidade" target="_blank">Política de Privacidade</a>.</small>
+      <div id="authStatus" role="status" aria-live="polite"></div>
     </div>
-    <div id="authStatus"></div>
   </form>
 </dialog>
 
 <dialog id="adminLoginModal">
   <form method="dialog" class="modal-card auth-card">
-    <button class="close" value="cancel">×</button>
+    <button class="close" value="cancel" aria-label="Fechar">×</button>
     <h2>Entrar no Admin</h2>
-    <input id="adminUser" placeholder="Usuário" autocomplete="username">
-    <input id="adminPassword" placeholder="Senha" type="password" autocomplete="current-password">
+    <label class="sr-only" for="adminUser">Usuário</label><input id="adminUser" placeholder="Usuário" autocomplete="username">
+    <label class="sr-only" for="adminPassword">Senha</label><input id="adminPassword" placeholder="Senha" type="password" autocomplete="current-password">
     <button type="button" id="adminLoginBtn" class="primary full">Entrar</button>
-    <div id="adminLoginStatus"></div>
+    <div id="adminLoginStatus" role="status" aria-live="polite"></div>
   </form>
 </dialog>
 
-<dialog id="digitalCheckout"><form method="dialog" class="modal-card"><button class="close" value="cancel">×</button><h2>Comprar arte digital</h2><div id="digitalSelected"></div>
-  <div id="accountBoxDigital" class="account-box">
-    <p id="accountInfoDigital" class="account-info">Você ainda não entrou com uma conta.</p>
-    <button type="button" id="openAuthDigital">Entrar / Cadastrar</button>
-  </div>
-  <button type="button" id="confirmDigital" class="primary full">Gerar pedido</button><div id="digitalStatus"></div></form></dialog>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="/static/app.js?v=14"></script>
+<script src="/static/app.js?v=49"></script>
 </body>
 </html>
