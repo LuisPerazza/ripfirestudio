@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=42">
+  <link rel="stylesheet" href="/static/styles.css?v=43">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -79,18 +79,16 @@
         <div class="toolbar">
           <div id="sideTabs" class="side-tabs">
             <button type="button" class="side-tab active" data-side="FRONT">Frente</button>
-            <button type="button" class="side-tab" data-side="BACK">Verso</button>
+            <button type="button" class="side-tab" data-side="BACK">Costas</button>
             <!-- Mangas desativadas por enquanto. Para reativar, tire este comentário e
                  mude SLEEVES_ENABLED para True no app.py.
             <button type="button" class="side-tab" data-side="SLEEVE_R">Manga direita</button>
             <button type="button" class="side-tab" data-side="SLEEVE_L">Manga esquerda</button> -->
           </div>
           <button id="deleteSelected">Excluir</button><button id="centerSelected">Centralizar</button><button id="bringFront">Trazer à frente</button>
-          <span>Arraste a arte pra mover. Clique nela pra selecionar: ⟳ no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica o tamanho.</span>
         </div>
         <div id="sleeveInfo" class="sleeve-info" hidden></div>
         <div id="sizeInfo" class="size-info" hidden></div>
-        <p class="kbd-help" id="shirtKbdHelp">Pelo teclado: dê Tab até a área da estampa, <kbd>N</kbd> escolhe a próxima arte, setas movem (<kbd>Shift</kbd> move mais), <kbd>+</kbd>/<kbd>−</kbd> mudam o tamanho, <kbd>R</kbd> gira, <kbd>C</kbd> centraliza e <kbd>Delete</kbd> remove.</p>
         <div class="shirt-stage">
           <img id="shirtPhoto" class="shirt-photo" alt="" style="display:none">
           <svg id="shirtSvg" class="shirt-svg" viewBox="0 0 430 520" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -105,6 +103,10 @@
             <div id="limitLabelW" class="limit-label limit-label-w" hidden></div>
             <div id="limitLabelH" class="limit-label limit-label-h" hidden></div>
           </div>
+        </div>
+        <div class="shirt-help">
+          <p><b>Mouse:</b> arraste a arte pra mover. Clique nela pra selecionar: <span class="sh-ico">⟳</span> no canto inferior esquerdo gira 90° e o quadradinho no canto inferior direito estica o tamanho.</p>
+          <p class="kbd-help" id="shirtKbdHelp"><b>Teclado:</b> dê Tab até a área da estampa, <kbd>N</kbd> escolhe a próxima arte, setas movem (<kbd>Shift</kbd> move mais), <kbd>+</kbd>/<kbd>−</kbd> mudam o tamanho, <kbd>R</kbd> gira, <kbd>C</kbd> centraliza e <kbd>Delete</kbd> remove.</p>
         </div>
       </section>
 
@@ -320,7 +322,7 @@
           <label for="mockupSide">Lado</label>
           <select name="side" id="mockupSide">
             <option value="FRONT">Frente</option>
-            <option value="BACK">Verso</option>
+            <option value="BACK">Costas</option>
           </select>
           <label for="mockupPhoto">Foto</label><input name="photo" id="mockupPhoto" type="file" accept="image/png,image/jpeg,image/webp" required>
           <div class="mockup-preview" id="mockupPreviewWrap" style="display:none">

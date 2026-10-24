@@ -472,3 +472,11 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 #editor input,#editor select,#editor textarea,#editor .upload-tool .gang-drop,#editor .gang-drop,#editor .model-tab:not(.active),#editor .side-tab:not(.active),#editor .account-box button,#editor .toolbar button:not(.active),#editor .gang-piece-actions button,#editor .gang-actions button,#editor .gang-item img,
 #profile input,#profile select,#profile textarea,#profile .btn-line,#profile .p-dl,#profile .p-dl-body button,#profile .o-pos{background:#efefec}
 #editor .upload-tool .gang-drop:hover,#editor .upload-tool .gang-drop.drag{background:#f3edf6}
+
+/* Instruções embaixo da camiseta */
+.shirt-help{margin-top:12px;background:#e5e5e1;border-radius:12px;padding:12px 16px;display:grid;gap:6px}
+.shirt-help p{margin:0;font-size:12.5px;line-height:1.5;color:#55555a}
+.shirt-help b{color:var(--ink)}
+.shirt-help .kbd-help{margin:0}
+.shirt-help kbd{background:#f4f4f1}
+.sh-ico{color:var(--accent);font-weight:800}

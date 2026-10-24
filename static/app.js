@@ -917,7 +917,7 @@ function renderMockupsList(){
   $('#mockupsList').innerHTML=shirtMockups.map(m=>`
     <div class="gang-item">
       <img src="${m.preview_url}" alt="">
-      <div class="gi-info"><b>${esc(m.model_id)} · ${esc(m.color)} · ${m.side==='BACK'?'Verso':'Frente'}</b><small>área ${Number(m.print_w).toFixed(1)}×${Number(m.print_h).toFixed(1)}%</small></div>
+      <div class="gi-info"><b>${esc(m.model_id)} · ${esc(m.color)} · ${m.side==='BACK'?'Costas':'Frente'}</b><small>área ${Number(m.print_w).toFixed(1)}×${Number(m.print_h).toFixed(1)}%</small></div>
       <button data-delmock="${m.id}" title="Remover" aria-label="Remover mockup">🗑</button>
     </div>
   `).join('') || '<p style="font-size:12px;color:var(--muted)">Nenhum mockup cadastrado — o editor usa o desenho padrão.</p>';
@@ -1240,7 +1240,7 @@ async function createOrder(){
   if(!currentCustomer){ openAuthModal(); return stat('#checkoutStatus','Entre ou crie uma conta antes de finalizar o pedido.',false); }
   if(!Object.values(sidesElements).some(list=>list.length))
     // Com as abas de manga desligadas (index.html), a mensagem não fala delas.
-    return stat('#checkoutStatus',$('#sideTabs [data-side="SLEEVE_R"]')?'Adicione uma arte na frente, no verso ou em uma das mangas.':'Adicione uma arte na frente ou no verso.',false);
+    return stat('#checkoutStatus',$('#sideTabs [data-side="SLEEVE_R"]')?'Adicione uma arte na frente, nas costas ou em uma das mangas.':'Adicione uma arte na frente ou nas costas.',false);
   if(shirtQty()<1)
     return stat('#checkoutStatus','Informe a quantidade em pelo menos um tamanho (P, M, G...).',false);
   const sizesOrdered=Object.entries(sizeMap()).filter(([,q])=>q>0).map(([s])=>s);
@@ -1249,7 +1249,7 @@ async function createOrder(){
     if(tooBig.length){
       const art=sideArtSizeCm(side);
       const list=tooBig.map(s=>{const l=sizeLimit(s);return `${s} (máx. ${fmtCm(l.w)} × ${fmtCm(l.h)} cm)`}).join(', ');
-      return stat('#checkoutStatus',`A arte ${side==='FRONT'?'da frente':'do verso'} mede ${fmtCm(art.w)} × ${fmtCm(art.h)} cm e não cabe ${tooBig.length>1?'nos tamanhos':'no tamanho'} ${list}. Diminua a arte.`,false);
+      return stat('#checkoutStatus',`A arte ${side==='FRONT'?'da frente':'das costas'} mede ${fmtCm(art.w)} × ${fmtCm(art.h)} cm e não cabe ${tooBig.length>1?'nos tamanhos':'no tamanho'} ${list}. Diminua a arte.`,false);
     }
   }
   const btn=$('#checkoutBtn');btn.disabled=true; // evita pedido duplicado no clique duplo
