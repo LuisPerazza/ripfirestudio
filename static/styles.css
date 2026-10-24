@@ -512,8 +512,10 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .gl-item input[type=number]{-moz-appearance:textfield}
 .gl-empty{font-size:12px;color:var(--muted);margin:0}
 
-/* Logo do topo: botão que volta ao Início */
-.home-logo{border:0;background:transparent;padding:4px 6px;margin:-4px -6px;border-radius:12px;cursor:pointer;transition:transform .15s,background .15s}
-.home-logo:hover{transform:translateY(-1px);background:rgba(255,255,255,.06)}
-.home-logo:active{transform:translateY(0) scale(.98)}
-.home-logo:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* Logo do topo: botão que volta ao Início (só o logo sobe, com sombra) */
+.home-logo{border:0;background:none;padding:0;margin:0;cursor:pointer;border-radius:0}
+.home-logo .brand-logo{transition:transform .2s ease,filter .2s ease}
+.home-logo:hover .brand-logo,.home-logo:focus-visible .brand-logo{transform:translateY(-3px);filter:drop-shadow(0 1px 4px rgba(0,0,0,.7)) drop-shadow(0 8px 10px rgba(0,0,0,.45))}
+.home-logo:active .brand-logo{transform:translateY(-1px)}
+.home-logo:focus{outline:none}
+.home-logo:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:6px}
