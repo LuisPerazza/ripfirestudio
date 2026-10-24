@@ -267,4 +267,9 @@ def from_env(base: Path) -> SupabaseStorage | None:
     key = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
     if not url or not key:
         return None
+    if any(c.isspace() for c in key) or not key.startswith(("sb_secret_", "eyJ")):
+        raise SystemExit(
+            "SUPABASE_SERVICE_KEY inválida: deve ser só a chave secreta do Supabase "
+            "(começa com sb_secret_ ou eyJ, numa linha só). Confira em Supabase > "
+            "Project Settings > API Keys > Secret keys.")
     return SupabaseStorage(url, key, os.getenv("SUPABASE_BUCKET", "ripfire").strip() or "ripfire", base)

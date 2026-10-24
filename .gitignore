@@ -16,3 +16,7 @@ media/mockups/*
 PRODUCAO_PAGA/
 backups/
 *.zip
+
+# Script da produção: guarda a senha do Admin
+sync_producao.json
+sync_producao_baixados.json
