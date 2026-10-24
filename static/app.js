@@ -1135,6 +1135,57 @@ async function exportPlacementFor(side,art){
 function sizeMap(){const m={};$$('#sizeGrid input').forEach(i=>m[i.dataset.size]=sizeQty(i));return m}
 // Envio acima do limite: o nginx responde 413 em HTML, sem o "detail" do servidor.
 const orderError=(r,d)=>d.detail||(r.status===413?'Os arquivos ficaram grandes demais para enviar. Diminua a arte ou divida o pedido.':'Erro ao criar o pedido.');
+/* ---------- Envio do pedido ---------- */
+// O canvas não grava DPI no PNG, e sem isso o RIP abre a arte a 72 dpi.
+// Insere o bloco pHYs logo depois do IHDR (o servidor fazia isso no envio
+// pelo formulário; no envio direto pro Storage o arquivo não passa por ele).
+const CRC_TABLE=Array.from({length:256},(_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;return c>>>0});
+const crc32=bytes=>{let c=0xFFFFFFFF;for(const b of bytes)c=CRC_TABLE[(c^b)&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0};
+async function pngWithDpi(blob,dpi){
+  const head=new Uint8Array(await blob.slice(0,65536).arrayBuffer());
+  if(head.length<33||[137,80,78,71,13,10,26,10].some((b,i)=>head[i]!==b)) return blob;
+  for(let p=8;p+8<=head.length;){
+    const len=((head[p]<<24)|(head[p+1]<<16)|(head[p+2]<<8)|head[p+3])>>>0;
+    const type=String.fromCharCode(...head.subarray(p+4,p+8));
+    if(type==='pHYs') return blob;
+    if(type==='IDAT') break;
+    p+=12+len;
+  }
+  const ppm=Math.round(dpi/0.0254), chunk=new Uint8Array(21), dv=new DataView(chunk.buffer);
+  dv.setUint32(0,9); chunk.set([112,72,89,115],4); dv.setUint32(8,ppm); dv.setUint32(12,ppm); chunk[16]=1;
+  dv.setUint32(17,crc32(chunk.subarray(4,17)));
+  return new Blob([blob.slice(0,33),chunk,blob.slice(33)],{type:'image/png'});
+}
+// Cria o pedido. files: [[campo, blob, nome do arquivo], ...]. Com o Supabase
+// (CONFIG.direct_upload) as artes vão direto do navegador pro Storage, sem
+// passar pelo servidor do site, e o pedido leva só o token do envio.
+async function sendOrder(data,files,statusSel){
+  const fd=new FormData();
+  fd.append('order_json',JSON.stringify(data));
+  if(CONFIG.direct_upload&&files.length){
+    const dpi=Number(CONFIG.dpi)||300;
+    const ready=await Promise.all(files.map(async([field,blob,name])=>[field,/\.png$/i.test(name)?await pngWithDpi(blob,dpi):blob]));
+    const r=await fetch('/api/orders/uploads',{method:'POST',headers:{...customerHeaders(),'Content-Type':'application/json'},
+      body:JSON.stringify({files:ready.map(([field,blob])=>({field,size:blob.size}))})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) return {r,d};
+    let sent=0;
+    const total=ready.reduce((a,[,b])=>a+b.size,0), mb=b=>(b/1048576).toFixed(1).replace('.',',');
+    for(const [field,blob] of ready){
+      stat(statusSel,`Enviando arte... ${mb(sent)} de ${mb(total)} MB`,true);
+      const up=await fetch(d.urls[field],{method:'PUT',headers:{'Content-Type':blob.type||'application/octet-stream','x-upsert':'true'},body:blob})
+        .catch(()=>null);
+      if(!up||!up.ok) throw new Error('Não foi possível enviar a arte. Confira sua internet e tente de novo.');
+      sent+=blob.size;
+    }
+    stat(statusSel,'Criando pedido...',true);
+    fd.append('upload_token',d.token);
+  }else{
+    files.forEach(([field,blob,name])=>fd.append(field,blob,name));
+  }
+  const r=await fetch('/api/orders',{method:'POST',headers:customerHeaders(),body:fd});
+  return {r,d:await r.json().catch(()=>({}))};
+}
 /* ---------- Pagamento (Mercado Pago) ---------- */
 // Leva pra página de pagamento. O pedido já está salvo: quem desistir paga depois em Minha conta.
 async function openCheckout(orderId){
@@ -1219,15 +1270,15 @@ async function createOrder(){
       total:Math.round(calcTotal()*100)/100,
       tracking:trackingContext()
     };
-    const fd=new FormData();
-    fd.append('order_json',JSON.stringify(data));
-    if(front) fd.append('design',front.blob,'arte_producao_frente.png');
-    if(back) fd.append('design_back',back.blob,'arte_producao_costas.png');
-    if(sleeveR) fd.append('design_sleeve_right',sleeveR.blob,'arte_producao_manga_direita.png');
-    if(sleeveL) fd.append('design_sleeve_left',sleeveL.blob,'arte_producao_manga_esquerda.png');
-    if(placeFront) fd.append('placement_front',placeFront,'posicao_frente.jpg');
-    if(placeBack) fd.append('placement_back',placeBack,'posicao_costas.jpg');
-    const r=await fetch('/api/orders',{method:'POST',headers:customerHeaders(),body:fd}),d=await r.json().catch(()=>({}));
+    const files=[
+      front&&['design',front.blob,'arte_producao_frente.png'],
+      back&&['design_back',back.blob,'arte_producao_costas.png'],
+      sleeveR&&['design_sleeve_right',sleeveR.blob,'arte_producao_manga_direita.png'],
+      sleeveL&&['design_sleeve_left',sleeveL.blob,'arte_producao_manga_esquerda.png'],
+      placeFront&&['placement_front',placeFront,'posicao_frente.jpg'],
+      placeBack&&['placement_back',placeBack,'posicao_costas.jpg'],
+    ].filter(Boolean);
+    const {r,d}=await sendOrder(data,files,'#checkoutStatus');
     if(r.status===401){ logoutCustomer(); openAuthModal(); }
     if(!r.ok)throw new Error(orderError(r,d));
     if(adminKey) loadOrders();
@@ -2371,10 +2422,7 @@ async function createGangOrder(){
       total:Math.round(calcGangTotal()*100)/100,
       tracking:trackingContext()
     };
-    const fd=new FormData();
-    fd.append('order_json',JSON.stringify(data));
-    fd.append('design',p.blob,'chapa_producao.png');
-    const r=await fetch('/api/orders',{method:'POST',headers:customerHeaders(),body:fd}), d=await r.json().catch(()=>({}));
+    const {r,d}=await sendOrder(data,[['design',p.blob,'chapa_producao.png']],'#checkoutStatusGang');
     if(r.status===401){ logoutCustomer(); openAuthModal(); }
     if(!r.ok) throw new Error(orderError(r,d));
     if(adminKey) loadOrders();
