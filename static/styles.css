@@ -372,3 +372,64 @@ main:focus{outline:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 /* Editor no celular: nada passa da largura da tela. */
 @media (max-width:640px){.editor-layout,.editor-layout.gang-mode{grid-template-columns:minmax(0,1fr)}.workspace{min-width:0}}
+
+/* Caixa "Artes Ripfire" no editor */
+.rf-arts{background:linear-gradient(135deg,#1e1e22,#0c0c0e);color:#f2f2f2;border:1px solid #2c2c31}
+.rf-arts-head{display:flex;gap:11px;align-items:center;margin-bottom:12px}
+.rf-arts-head b{display:block;font-family:'Barlow',Arial,sans-serif;font-size:17px;font-weight:800;letter-spacing:.2px}
+.rf-arts-head small{display:block;margin-top:2px;color:#a9a9ad;font-size:12px;line-height:1.35}
+.rf-arts-icon{flex:none;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-size:18px;background:rgba(155,89,182,.3);color:#ecd3f7}
+.rf-arts .catalog-mini{margin-bottom:10px}
+.rf-arts .catalog-mini button{background:#232327;border-color:#34343a;border-radius:9px;transition:border-color .15s,transform .15s}
+.rf-arts .catalog-mini button:hover{border-color:var(--accent);transform:translateY(-1px)}
+.tool.rf-arts .rf-arts-btn{width:100%;margin:0;border:0;border-radius:10px;padding:11px;font-family:'Barlow',Arial,sans-serif;font-weight:800;font-size:14px;letter-spacing:.5px;text-transform:uppercase;color:#fff;background:linear-gradient(135deg,#b57edc,var(--accent-dark));box-shadow:0 6px 16px rgba(155,89,182,.35);transition:transform .15s,box-shadow .15s}
+.tool.rf-arts .rf-arts-btn:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(155,89,182,.5)}
+.tool.rf-arts .rf-arts-btn:focus-visible{outline:2px solid #fff;outline-offset:2px}
+#shirtDrop .gang-drop-empty small{display:block;margin-top:3px}
+
+/* Janela "Artes Ripfire" */
+.ap-premium[hidden],.catalog-mini[hidden]{display:none}
+dialog.art-picker{width:min(860px,94vw);height:min(720px,90vh);background:#0f0f11;color:#f2f2f2;border:1px solid #2c2c31;border-radius:20px;overflow:hidden}
+.ap-shell{display:flex;flex-direction:column;height:100%;padding:22px 24px 16px}
+.ap-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+.ap-head h2{margin:0;font-family:'Barlow',Arial,sans-serif;font-size:28px;font-weight:800;color:#fff}
+.ap-head p{margin:4px 0 0;color:#a9a9ad;font-size:14px}
+.ap-close{flex:none;width:38px;height:38px;border-radius:50%;border:1px solid #2c2c31;background:#18181b;color:#f2f2f2;font-size:22px;line-height:1}
+.ap-close:hover{border-color:var(--accent)}
+.ap-sides{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.ap-side{position:relative;display:flex;align-items:center;gap:12px;text-align:left;background:#18181b;border:1px solid #2c2c31;border-radius:14px;padding:12px 14px;color:#fff;transition:border-color .15s,background .15s}
+.ap-side:hover{border-color:#4a4a52}
+.ap-side.on{border-color:var(--accent);background:linear-gradient(135deg,rgba(155,89,182,.24),#18181b 70%)}
+.ap-side-icon{flex:none;width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-weight:700;background:#26262b;color:#d4d4d8}
+.ap-side.premium .ap-side-icon{background:rgba(155,89,182,.3);color:#ecd3f7}
+.ap-side b{display:block;font-size:16px}
+.ap-side small{display:block;color:#a9a9ad;font-size:12px;margin-top:2px}
+.ap-side .lib-badge{position:absolute;top:10px;right:10px;padding:3px 9px;font-size:11px}
+.ap-premium{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border:1px solid rgba(155,89,182,.45);background:rgba(155,89,182,.12);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:#e2cdee}
+.ap-premium b{color:#fff}
+.ap-premium .btn-grad{margin:0;padding:8px 16px}
+.ap-body{flex:1;overflow:auto;min-height:0;padding-right:4px}
+.ap-search{width:100%;height:42px;background:#18181b;border:1px solid #2c2c31;border-radius:11px;color:#f2f2f2;padding:0 14px;margin-bottom:12px}
+.ap-search::placeholder{color:#7d7d84}
+.ap-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(181,126,220,.4)}
+.ap-folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.ap-folder{display:grid;gap:4px;text-align:left;background:#18181b;border:1px solid #2c2c31;border-radius:14px;padding:14px;color:#fff;transition:border-color .15s,transform .15s}
+.ap-folder:hover{border-color:var(--accent);transform:translateY(-2px)}
+.ap-folder-icon{color:#c39bd3;font-size:16px}
+.ap-folder b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ap-folder small{color:#a9a9ad;font-size:12px}
+.ap-back{border:0;background:none;color:#a9a9ad;font-size:13px;padding:0;margin-bottom:6px}
+.ap-back:hover{color:#fff}
+.ap-folder-title{margin:0 0 12px;font-family:'Barlow',Arial,sans-serif;font-size:22px;color:#fff}
+.ap-arts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.ap-art{display:flex;flex-direction:column;background:#18181b;border:1px solid #2c2c31;border-radius:14px;overflow:hidden;padding:0;color:#d4d4d8;text-align:left;transition:border-color .15s,transform .15s}
+.ap-art:hover:not([disabled]){border-color:var(--accent);transform:translateY(-2px)}
+.ap-art[disabled]{opacity:.6;cursor:wait}
+.ap-art-img{position:relative;aspect-ratio:1;background:#232327;display:flex;align-items:center;justify-content:center;padding:10px}
+.ap-art-img img{max-width:100%;max-height:100%;object-fit:contain;user-select:none}
+.ap-art.locked .ap-art-img img{filter:blur(2px) brightness(.8)}
+.ap-art-name{padding:8px 10px 2px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ap-art-cta{padding:0 10px 10px;font-size:11px;font-weight:800;color:#c39bd3;text-transform:uppercase;letter-spacing:.4px}
+.ap-empty{grid-column:1/-1;color:#a9a9ad;font-size:14px;padding:26px;border:1px dashed #34343a;border-radius:14px;text-align:center;margin:0}
+.ap-status{min-height:20px;margin-top:10px;font-size:13px;color:#c39bd3}
+@media(max-width:600px){.ap-shell{padding:16px}.ap-head h2{font-size:22px}.ap-sides{gap:6px}.ap-side{padding:10px}.ap-side .lib-badge{display:none}.ap-arts{grid-template-columns:repeat(2,minmax(0,1fr))}.ap-folders{grid-template-columns:1fr 1fr}}

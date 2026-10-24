@@ -374,7 +374,10 @@ function fillConfig(){
   renderSizeGrid();
   $('#aiStatus').textContent=CONFIG.ai_enabled?`IA ativa: ${CONFIG.ai_model}`:'IA desativada até configurar .env';
   $('#gangAiStatus').textContent=CONFIG.ai_enabled?`IA ativa: ${CONFIG.ai_model}`:'IA desativada até configurar .env';
+  $$('.ai-tool').forEach(el=>el.hidden=!(AI_UI_ENABLED&&CONFIG.ai_enabled));
 }
+// "Criar com IA" fora do site por enquanto. Pra voltar: true (e OPENAI_API_KEY no servidor).
+const AI_UI_ENABLED=false;
 function bind(){
   $$('.nav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));$('#startCustomize').onclick=()=>tab('editor');
   $('#openAuthShirt').onclick=openAuthModal;$('#openAuthGang').onclick=openAuthModal;
@@ -405,7 +408,14 @@ function bind(){
   onEnter(['#adminUser','#adminPassword'],submitAdminLogin);
   $('#saleType').onchange=()=>{toggleSale();updatePrice()};$('#shirtColor').onchange=updateShirtVisual;$('#sizeGrid').oninput=updatePrice;
   $$('#sideTabs [data-side]').forEach(b=>b.onclick=()=>selectSide(b.dataset.side));
-  $('#uploadArt').onchange=e=>{const f=e.target.files[0];if(f)addImage(URL.createObjectURL(f),'UPLOAD').catch(err=>alert(err.message));e.target.value=''};
+  const addShirtFile=f=>{if(!f)return;if(!f.type.startsWith('image/'))return alert('Selecione um arquivo de imagem (PNG, JPG ou WEBP).');addImage(URL.createObjectURL(f),'UPLOAD').catch(err=>alert(err.message))};
+  $('#uploadArt').onchange=e=>{addShirtFile(e.target.files[0]);e.target.value=''};
+  const shirtDropEl=$('#shirtDrop');
+  ['dragenter','dragover'].forEach(evt=>shirtDropEl.addEventListener(evt,ev=>{ev.preventDefault();shirtDropEl.classList.add('drag')}));
+  ['dragleave','dragend'].forEach(evt=>shirtDropEl.addEventListener(evt,()=>shirtDropEl.classList.remove('drag')));
+  shirtDropEl.addEventListener('drop',ev=>{ev.preventDefault();shirtDropEl.classList.remove('drag');addShirtFile(ev.dataTransfer.files[0])});
+  $$('[data-open-arts]').forEach(b=>b.onclick=openArtPicker);
+  $$('[data-ap-close]').forEach(b=>b.onclick=()=>$('#artPickerModal').close());
   $('#generateAI').onclick=generateAI;$('#deleteSelected').onclick=()=>{if(!selected)return;elements=elements.filter(e=>e!==selected);sidesElements[currentSide]=elements;selected=null;render()};
   $('#centerSelected').onclick=()=>{if(selected){const r=limitRect();selected.x=r.x+r.w/2;selected.y=r.y+r.h/2;clampDragToCanvas(selected);render()}};$('#bringFront').onclick=()=>{if(selected){elements=elements.filter(e=>e!==selected);elements.push(selected);sidesElements[currentSide]=elements;render()}};
   $('#shirtHandleRotate').onclick=()=>{if(!selected)return;selected.rotation=((selected.rotation||0)+90)%360;clampResizeToCanvas(selected);clampDragToCanvas(selected);render()};
@@ -925,9 +935,10 @@ async function loadArtworks(){
 }
 function renderCatalogs(){
   const custom=artworks.filter(a=>a.can_customize);
-  const miniHtml=custom.slice(0,9).map(a=>`<button data-use="${a.id}"><img src="${a.preview_url}" alt="${esc(a.name)}"></button>`).join('')||'<small>Cadastre artes no Admin.</small>';
-  $('#catalogMini').innerHTML=miniHtml;
-  $('#gangCatalogMini').innerHTML=miniHtml;
+  // Destaques do catálogo do Admin (até 6). Sem nenhum, a caixa mostra só o "Explorar artes".
+  const miniHtml=custom.slice(0,6).map(a=>`<button type="button" data-use="${a.id}" title="${esc(a.name)}"><img src="${a.preview_url}" alt="${esc(a.name)}"></button>`).join('');
+  $('#catalogMini').innerHTML=miniHtml; $('#catalogMini').hidden=!miniHtml;
+  $('#gangCatalogMini').innerHTML=miniHtml; $('#gangCatalogMini').hidden=!miniHtml;
   $$('#catalogMini [data-use]').forEach(b=>b.onclick=()=>useCatalog(b.dataset.use));
   $$('#gangCatalogMini [data-use]').forEach(b=>b.onclick=()=>useGangCatalog(b.dataset.use));}
 async function useCatalog(id){const a=artworks.find(x=>x.id===id);if(a)await addImage(a.preview_url,'CATALOGO',a.id)}
@@ -1578,6 +1589,81 @@ async function useLibraryArt(ref,btn){
     else (await addImage(url,premiumId?'PREMIUM':'BIBLIOTECA')).premiumId=premiumId;
   }catch(e){ alert(e.message); }
   finally{ btn.disabled=false; }
+}
+
+/* ---------- Janela "Artes Ripfire" (no editor) ---------- */
+// A mesma biblioteca da aba Artes digitais, em tamanho de janela: Grátis/Premium
+// → pastas → artes. Clicou na arte, ela vai pra camisa (ou pra chapa do DTF).
+let apView={side:'free',subId:null}, apQuery='';
+async function openArtPicker(){
+  const dlg=$('#artPickerModal');
+  apView.subId=null; apQuery=''; $('#apStatus').textContent='';
+  const dtf=$('#saleType').value==='DTF_ONLY';
+  $('#apSubtitle').textContent=dtf?'Escolha uma arte e ela entra na sua chapa de DTF.':'Escolha uma arte e ela vai direto pra sua camisa.';
+  renderArtPicker();
+  if(!dlg.open) dlg.showModal();
+  if(!library.categories.length){ await loadLibrary(); renderArtPicker(); }
+}
+function renderArtPicker(){
+  $('#apSides').innerHTML=LIB_SIDES.map(id=>`<button type="button" role="tab" class="ap-side ${id}${apView.side===id?' on':''}" aria-selected="${apView.side===id}" data-ap-side="${id}">
+      <span class="ap-side-icon" aria-hidden="true">${id==='premium'?'★':'↓'}</span><span><b>${esc(libCat(id)?.name||ACCESS_LABEL[id])}</b>
+      <small>${plural(libTotal(id),'arte','artes')}</small></span>${id==='premium'?libBadge('premium'):''}</button>`).join('');
+  $$('#apSides [data-ap-side]').forEach(b=>b.onclick=()=>{apView={side:b.dataset.apSide,subId:null};renderArtPicker()});
+  const prem=$('#apPremium'), locked=apView.side==='premium'&&!hasPremium();
+  prem.hidden=!locked;
+  if(locked){
+    prem.innerHTML=`<span><b>★ Premium</b> · use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> a cada ${CONFIG.premium_days||30} dias.</span>
+      <button type="button" class="btn-grad" data-ap-sub>Assinar</button>`;
+    prem.querySelector('[data-ap-sub]').onclick=()=>{$('#artPickerModal').close();tab('digital');subscribePremium()};
+  }
+  const sub=libCat(apView.subId);
+  if(!sub){
+    $('#apBody').innerHTML=`<input id="apSearch" class="ap-search" type="search" placeholder="Buscar pasta (ex.: anime)" value="${esc(apQuery)}" aria-label="Buscar pasta">
+      <div id="apFolders" class="ap-folders"></div>`;
+    $('#apSearch').oninput=e=>{apQuery=e.target.value;renderApFolders()};
+    renderApFolders();
+    return;
+  }
+  $('#apBody').innerHTML=`<button type="button" class="ap-back" data-ap-back>← ${esc(libCat(apView.side)?.name||'Voltar')}</button>
+    <h3 class="ap-folder-title">${esc(sub.name)}</h3><div id="apArts" class="ap-arts"><p class="ap-empty">Carregando artes...</p></div>`;
+  $('#apBody [data-ap-back]').onclick=()=>{apView.subId=null;renderArtPicker()};
+  renderApArts(sub);
+}
+function renderApFolders(){
+  const q=normTxt(apQuery.trim());
+  const cards=libSubs(apView.side).filter(c=>normTxt(c.name).includes(q))
+    .sort((a,b)=>a.name.localeCompare(b.name,'pt-BR',{numeric:true}));
+  $('#apFolders').innerHTML=cards.map(c=>`<button type="button" class="ap-folder" data-ap-open="${c.id}">
+      <span class="ap-folder-icon" aria-hidden="true">▣</span><b>${esc(c.name)}</b><small>${plural(c.art_count||0,'arte','artes')}</small></button>`).join('')
+    ||`<p class="ap-empty">${q?'Nenhuma pasta encontrada.':library.categories.length?'Nenhuma pasta neste lado ainda.':'Carregando...'}</p>`;
+  $$('#apFolders [data-ap-open]').forEach(b=>b.onclick=()=>{apView.subId=b.dataset.apOpen;renderArtPicker()});
+}
+async function renderApArts(cat){
+  if(!libArts[cat.id]){
+    try{ const r=await fetch(`/api/library/categories/${cat.id}/arts`); libArts[cat.id]=r.ok?await r.json().catch(()=>[]):[]; }catch{ libArts[cat.id]=[]; }
+  }
+  if(apView.subId!==cat.id||!$('#apArts')) return; // saiu da pasta enquanto carregava
+  const locked=cat.access==='premium'&&!hasPremium();
+  const arts=[...libArts[cat.id]].sort((a,b)=>b.created_at-a.created_at);
+  arts.forEach(a=>{libArtIndex[a.id]={name:a.name,access:cat.access}});
+  $('#apArts').innerHTML=arts.map(a=>`<button type="button" class="ap-art${locked?' locked':''}" data-ap-use="${a.id}" title="${esc(a.name)}">
+      <span class="ap-art-img"><img src="/api/library/arts/${a.id}/thumb" alt="" loading="lazy" draggable="false">${locked?'<span class="lock-badge">🔒</span>':''}</span>
+      <span class="ap-art-name">${esc(a.name)}</span><span class="ap-art-cta">${locked?'Premium':'Usar arte'}</span></button>`).join('')
+    ||'<p class="ap-empty">Nenhuma arte nesta pasta ainda.</p>';
+  $$('#apArts [data-ap-use]').forEach(b=>b.onclick=()=>locked?($('#apStatus').textContent='Essa arte é premium. Assine para usar.'):pickArt(b.dataset.apUse,b));
+}
+async function pickArt(id,btn){
+  if(!currentCustomer){ $('#artPickerModal').close(); return openAuthModal(); }
+  const info=libArtIndex[id]||{name:'Arte',access:'free'}, premiumId=info.access==='premium'?id:null;
+  $$('#apArts [data-ap-use]').forEach(b=>b.disabled=true);
+  $('#apStatus').textContent=`Carregando "${info.name}"...`;
+  try{
+    const url=URL.createObjectURL(await fetchDigitalBlob(`/api/library/arts/${id}/file`));
+    if($('#saleType').value==='DTF_ONLY') handleGangImageURL(url,info.name,premiumId);
+    else (await addImage(url,premiumId?'PREMIUM':'BIBLIOTECA')).premiumId=premiumId;
+    $('#artPickerModal').close();
+  }catch(e){ $('#apStatus').textContent=e.message; }
+  finally{ $$('#apArts [data-ap-use]').forEach(b=>b.disabled=false); }
 }
 
 /* ---------- Admin da biblioteca ---------- */

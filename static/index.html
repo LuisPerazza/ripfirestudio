@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=37">
+  <link rel="stylesheet" href="/static/styles.css?v=38">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -110,9 +110,23 @@
 
       <section class="panel shirt-only" id="addArtPanel">
         <h2>Adicionar arte</h2>
-        <div class="tool"><label for="uploadArt">Upload</label><input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp"></div>
-        <div class="tool"><label for="aiPrompt">Criar com IA</label><textarea id="aiPrompt" rows="4" placeholder="Descreva a estampa"></textarea><button id="generateAI">Gerar com IA</button><small id="aiStatus" role="status" aria-live="polite"></small></div>
-        <div class="tool"><label id="catLabel">Artes Ripfire</label><div id="catalogMini" class="catalog-mini" role="group" aria-labelledby="catLabel"></div></div>
+        <div class="tool">
+          <label for="uploadArt">Sua imagem</label>
+          <div id="shirtDrop" class="gang-drop">
+            <input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp">
+            <div class="gang-drop-empty">
+              <span class="gang-drop-icon">⬆</span>
+              <span>Clique ou arraste uma imagem aqui<br><small>PNG, JPG ou WEBP · vai direto pra camisa</small></span>
+            </div>
+          </div>
+        </div>
+        <!-- Criar com IA desligado por enquanto (AI_UI_ENABLED no app.js). -->
+        <div class="tool ai-tool" hidden><label for="aiPrompt">Criar com IA</label><textarea id="aiPrompt" rows="4" placeholder="Descreva a estampa"></textarea><button id="generateAI">Gerar com IA</button><small id="aiStatus" role="status" aria-live="polite"></small></div>
+        <div class="tool rf-arts">
+          <div class="rf-arts-head"><span class="rf-arts-icon" aria-hidden="true">★</span><div><b id="catLabel">Artes Ripfire</b><small>Artes prontas, grátis e premium, pra usar na sua estampa.</small></div></div>
+          <div id="catalogMini" class="catalog-mini" role="group" aria-labelledby="catLabel"></div>
+          <button type="button" class="rf-arts-btn" data-open-arts>Explorar artes</button>
+        </div>
         <hr>
         <h2>Cliente</h2>
         <div class="account-box">
@@ -126,7 +140,7 @@
       <section class="panel gang-only" id="gangAddPanel" style="display:none">
         <h2>Adicionar imagem</h2>
         <div class="tool">
-          <label for="gangUpload">Upload</label>
+          <label for="gangUpload">Sua imagem</label>
           <div id="gangDrop" class="gang-drop">
             <input id="gangUpload" type="file" accept="image/png,image/jpeg,image/webp">
             <div class="gang-drop-empty">
@@ -139,8 +153,12 @@
             </div>
           </div>
         </div>
-        <div class="tool"><label for="gangAiPrompt">Criar com IA</label><textarea id="gangAiPrompt" rows="3" placeholder="Descreva a estampa"></textarea><button type="button" id="gangGenerateAI">Gerar com IA</button><small id="gangAiStatus" role="status" aria-live="polite"></small></div>
-        <div class="tool"><label id="gangCatLabel">Artes Ripfire</label><div id="gangCatalogMini" class="catalog-mini" role="group" aria-labelledby="gangCatLabel"></div></div>
+        <div class="tool ai-tool" hidden><label for="gangAiPrompt">Criar com IA</label><textarea id="gangAiPrompt" rows="3" placeholder="Descreva a estampa"></textarea><button type="button" id="gangGenerateAI">Gerar com IA</button><small id="gangAiStatus" role="status" aria-live="polite"></small></div>
+        <div class="tool rf-arts">
+          <div class="rf-arts-head"><span class="rf-arts-icon" aria-hidden="true">★</span><div><b id="gangCatLabel">Artes Ripfire</b><small>Artes prontas, grátis e premium, pra montar a sua chapa.</small></div></div>
+          <div id="gangCatalogMini" class="catalog-mini" role="group" aria-labelledby="gangCatLabel"></div>
+          <button type="button" class="rf-arts-btn" data-open-arts>Explorar artes</button>
+        </div>
         <div class="dims-row">
           <div><label for="gangWidthCm">Largura (cm)</label><input id="gangWidthCm" type="number" min="1" step="0.5" placeholder="Ex: 15"></div>
           <div><label for="gangHeightCm">Altura (cm)</label><input id="gangHeightCm" type="number" min="1" step="0.5" placeholder="—" disabled></div>
@@ -379,6 +397,19 @@
   <small>&copy; Ripfire</small>
 </footer>
 
+<dialog id="artPickerModal" class="art-picker" aria-labelledby="artPickerTitle">
+  <div class="ap-shell">
+    <header class="ap-head">
+      <div><h2 id="artPickerTitle">Artes Ripfire</h2><p id="apSubtitle">Escolha uma arte e ela vai direto pra sua estampa.</p></div>
+      <button type="button" class="ap-close" data-ap-close aria-label="Fechar">×</button>
+    </header>
+    <div class="ap-sides" id="apSides" role="tablist" aria-label="Lado da biblioteca"></div>
+    <div id="apPremium" class="ap-premium" hidden></div>
+    <div id="apBody" class="ap-body"></div>
+    <div id="apStatus" class="ap-status" role="status" aria-live="polite"></div>
+  </div>
+</dialog>
+
 <dialog id="authModal">
   <form method="dialog" class="auth-shell">
     <button class="close auth-close" value="cancel" aria-label="Fechar">×</button>
@@ -445,6 +476,6 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=49"></script>
+<script src="/static/app.js?v=50"></script>
 </body>
 </html>
