@@ -20,13 +20,12 @@ import urllib.request
 import uuid
 import zipfile
 import zlib
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -36,6 +35,11 @@ from starlette.background import BackgroundTask
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
 
+# Depois do .env: DATABASE_URL e SUPABASE_* podem vir dele.
+import cloud_storage  # noqa: E402
+import dbcompat  # noqa: E402
+from dbcompat import IS_PG, db  # noqa: E402
+
 # O limite padrão do Pillow (~179 Mpx) recusava chapas de DTF acima de
 # ~2,2 m, e sem a medida da chapa o pedido não tem preço. Aqui só lemos o
 # cabeçalho das imagens (image_info), nunca decodificamos os pixels. O Pillow
@@ -43,8 +47,26 @@ load_dotenv(BASE / ".env")
 # que o navegador gera (~6.900 × 32.767 px ≈ 226 Mpx).
 Image.MAX_IMAGE_PIXELS = 400_000_000
 
-CONFIG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+def load_config() -> dict[str, Any]:
+    """config.json da pasta do projeto. No Render ele não vai pro GitHub
+    (tem as senhas): sobe como "Secret File", que o Render coloca em
+    /etc/secrets/config.json. CONFIG_JSON (o conteúdo inteiro numa variável
+    de ambiente) ou CONFIG_PATH também valem."""
+    raw = os.getenv("CONFIG_JSON", "").strip()
+    if raw:
+        return json.loads(raw)
+    for candidate in (os.getenv("CONFIG_PATH", ""), BASE / "config.json", "/etc/secrets/config.json"):
+        if candidate and Path(candidate).is_file():
+            return json.loads(Path(candidate).read_text(encoding="utf-8"))
+    sys.exit("config.json não encontrado. Copie o config.example.json para config.json "
+             "(no Render: Environment > Secret Files > config.json).")
+
+
+CONFIG = load_config()
 DB_PATH = BASE / "data" / "studio.db"
+dbcompat.configure_sqlite(DB_PATH)
+# Supabase Storage (None no PC): ver cloud_storage.py.
+STORE = cloud_storage.from_env(BASE)
 ARTWORKS_DIR = BASE / "media" / "artworks"
 GENERATED_DIR = BASE / "media" / "generated"
 MOCKUPS_DIR = BASE / "media" / "mockups"
@@ -62,6 +84,11 @@ _production_drop = Path(CONFIG.get("production_drop_folder", "./PRODUCAO_PAGA"))
 PRODUCTION_DROP = (
     _production_drop if _production_drop.is_absolute() else (BASE / _production_drop).resolve()
 )
+if STORE:
+    # No servidor a pasta de produção do config (ex.: D:\PEDIDOS_DTF_PAGOS)
+    # não existe: quem leva os pedidos pagos pra ela é o sync_producao.py,
+    # rodando no PC da produção.
+    PRODUCTION_DROP = BASE / "PRODUCAO_PAGA"
 
 # Backups automáticos do banco (ver "Backup dos dados" mais abaixo).
 BACKUP_CFG: dict[str, Any] = CONFIG.get("backup") or {}
@@ -72,21 +99,66 @@ for p in (DB_PATH.parent, BACKUP_DIR, ARTWORKS_DIR, GENERATED_DIR, MOCKUPS_DIR, 
     p.mkdir(parents=True, exist_ok=True)
 
 
-@contextmanager
-def db() -> Iterator[sqlite3.Connection]:
-    """Uso: `with db() as con:`. Grava (commit) se der certo, desfaz se der
-    erro e sempre fecha a conexão. O `with` direto do sqlite3 só faz o commit
-    e deixava a conexão aberta até o coletor de lixo passar."""
-    con = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    con.row_factory = sqlite3.Row
+# ---------- Arquivos no Supabase Storage ----------
+# Sem STORE (no PC) estas funções só olham o disco. Com STORE (no Render),
+# o que é gravado também sobe pro Storage, e o que sumiu do disco (deploy
+# novo, reinício) é baixado de volta quando alguém precisa.
+def cloud_put(*paths: Path):
+    if STORE:
+        for p in paths:
+            STORE.upload(p)
+
+
+def cloud_put_dir(folder: Path):
+    if STORE and folder.is_dir():
+        STORE.upload_dir(folder)
+
+
+def cloud_get(path: Path | str) -> bool:
+    """True se o arquivo está no disco (baixando do Storage se precisar)."""
+    path = Path(path)
+    if path.is_file():
+        return True
+    if not STORE:
+        return False
     try:
-        with con:
-            yield con
-    finally:
-        con.close()
+        return STORE.download(path)
+    except (cloud_storage.StorageError, ValueError) as exc:
+        print(f"[storage] {exc}")
+        return False
+
+
+def cloud_get_dir(folder: Path | str):
+    if STORE and folder:
+        try:
+            STORE.download_dir(Path(folder))
+        except (cloud_storage.StorageError, ValueError) as exc:
+            print(f"[storage] {exc}")
+
+
+def cloud_delete(*paths: Path | str):
+    if STORE:
+        try:
+            STORE.delete(*paths)
+        except (cloud_storage.StorageError, ValueError) as exc:
+            print(f"[storage] não apagou {paths}: {exc}")
+
+
+def cloud_delete_dir(folder: Path | str):
+    if STORE and folder:
+        try:
+            STORE.delete_dir(Path(folder))
+        except (cloud_storage.StorageError, ValueError) as exc:
+            print(f"[storage] não apagou {folder}: {exc}")
 
 
 def init_db():
+    if IS_PG:
+        with db() as con:
+            dbcompat.init_pg_schema(con)
+            seed_library_sides(con)
+            relocate_paths(con)
+        return
     with db() as con:
         con.executescript("""
         PRAGMA journal_mode=WAL;
@@ -249,21 +321,24 @@ def init_db():
         if "side" not in mockup_cols:
             con.execute("ALTER TABLE shirt_mockups ADD COLUMN side TEXT NOT NULL DEFAULT 'FRONT'")
 
-        # Cria os lados Grátis e Premium uma vez só, já com 8 pastas para renomear.
-        for side, label in LIBRARY_SIDES.items():
-            if con.execute("SELECT 1 FROM library_categories WHERE id=?", (side,)).fetchone():
-                continue
-            now = time.time()
-            con.executemany(
-                "INSERT INTO library_categories (id,created_at,name,parent_id,access) VALUES(?,?,?,?,?)",
-                [(side, now, label, None, side)]
-                + [(uuid.uuid4().hex[:12], now + i / 1000, f"pasta{i:02d}", side, side) for i in range(1, 9)]
-            )
-
+        seed_library_sides(con)
         relocate_paths(con)
 
 
-def relocate_paths(con: sqlite3.Connection):
+def seed_library_sides(con: Any):
+    """Cria os lados Grátis e Premium uma vez só, já com 8 pastas para renomear."""
+    for side, label in LIBRARY_SIDES.items():
+        if con.execute("SELECT 1 FROM library_categories WHERE id=?", (side,)).fetchone():
+            continue
+        now = time.time()
+        con.executemany(
+            "INSERT INTO library_categories (id,created_at,name,parent_id,access) VALUES(?,?,?,?,?)",
+            [(side, now, label, None, side)]
+            + [(uuid.uuid4().hex[:12], now + i / 1000, f"pasta{i:02d}", side, side) for i in range(1, 9)]
+        )
+
+
+def relocate_paths(con: Any):
     """O banco guarda caminhos absolutos. Com o projeto copiado pra outra
     pasta ou pro servidor (C:\\Users\\... no Linux), eles apontariam pro lugar
     antigo e biblioteca, mockups e pedidos dariam "arquivo não encontrado".
@@ -275,12 +350,13 @@ def relocate_paths(con: sqlite3.Connection):
         ("orders", "folder_path", ORDERS_DIR),
         ("orders", "production_drop_path", PRODUCTION_DROP),
     ):
-        rows = con.execute(f"SELECT rowid, {col} AS p FROM {table} WHERE {col} != ''").fetchall()
+        # Pelo id (existe nas duas bases); o rowid é só do SQLite.
+        rows = con.execute(f"SELECT id, {col} AS p FROM {table} WHERE {col} != ''").fetchall()
         for row in rows:
             # Separa por \ e por /: o caminho pode ter vindo do Windows.
             new = str(folder / re.split(r"[\\/]", row["p"].rstrip("\\/"))[-1])
             if new != row["p"]:
-                con.execute(f"UPDATE {table} SET {col}=? WHERE rowid=?", (new, row["rowid"]))
+                con.execute(f"UPDATE {table} SET {col}=? WHERE id=?", (new, row["id"]))
 
 
 def safe_name(value: str) -> str:
@@ -693,17 +769,25 @@ def library_art(art_id: str) -> dict[str, Any]:
 def library_preview(art: dict[str, Any]) -> Path:
     """Prévia reduzida (webp, mantém a transparência), gerada uma vez e guardada em cache."""
     dest = DIGITAL_CACHE_DIR / f"lib_{art['id']}_{THUMB_PX}.webp"
-    if not dest.exists():
+    if not cloud_get(dest):
+        if not cloud_get(art["file_path"]):
+            raise HTTPException(404, "Arquivo da arte não encontrado.")
         with Image.open(art["file_path"]) as im:
             small = im.convert("RGBA")
         small.thumbnail((THUMB_PX, THUMB_PX), Image.Resampling.LANCZOS)
         small.save(dest, "WEBP", quality=88)
+        try:
+            cloud_put(dest)  # a próxima vez não precisa baixar o original
+        except cloud_storage.StorageError as exc:
+            print(f"[storage] miniatura não salva: {exc}")
     return dest
 
 
 def remove_library_files(art_id: str, file_path: str):
+    thumb = DIGITAL_CACHE_DIR / f"lib_{art_id}_{THUMB_PX}.webp"
     Path(file_path).unlink(missing_ok=True)
-    (DIGITAL_CACHE_DIR / f"lib_{art_id}_{THUMB_PX}.webp").unlink(missing_ok=True)
+    thumb.unlink(missing_ok=True)
+    cloud_delete(file_path, thumb)
 
 
 def write_dtf_report(order_number: str, customer_name: str, sources: list[dict[str, Any]]) -> Path:
@@ -732,6 +816,12 @@ def write_dtf_report(order_number: str, customer_name: str, sources: list[dict[s
 
     report_path = folder / "RELATORIO_ARTES.txt"
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        cloud_put(report_path)
+    except cloud_storage.StorageError as exc:
+        # O pedido já está salvo; se o relatório faltar, a lista das artes
+        # ainda está no pedido.json ("sources").
+        print(f"[storage] relatório do pedido {order_number} não subiu: {exc}")
     return report_path
 
 
@@ -806,6 +896,15 @@ def load_order(order_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def production_folder_name(row: dict[str, Any]) -> str:
+    return f"{row['order_number']}__{safe_name(row['customer_name'])}__{safe_name(row['sale_type'])}"
+
+
+def is_production_file(name: str) -> bool:
+    """O que vai pra produção: as artes, as fotos de posição e o pedido.json."""
+    return name == "pedido.json" or name.startswith(("ARTE_PRODUCAO", "POSICAO_", "ARTE_DIGITAL"))
+
+
 def release_paid_order_to_production(order_id: str):
     row = load_order(order_id)
     if not row:
@@ -814,15 +913,14 @@ def release_paid_order_to_production(order_id: str):
         raise HTTPException(400, "Pedido ainda não está pago.")
 
     source_folder = Path(row["folder_path"])
-    if not source_folder.exists():
+    if not source_folder.exists() and not (STORE and STORE.list_files(source_folder)):
         raise HTTPException(500, "Pasta original do pedido não encontrada.")
 
     data = json.loads(row["data_json"])
-    drop_folder = PRODUCTION_DROP / (
-        f"{row['order_number']}__{safe_name(row['customer_name'])}__{safe_name(row['sale_type'])}"
-    )
+    drop_folder = PRODUCTION_DROP / production_folder_name(row)
+    readme = drop_folder / "LEIA-ME-PRODUCAO.json"
 
-    if drop_folder.exists():
+    if drop_folder.exists() or (STORE and STORE.list_files(drop_folder)):
         with db() as con:
             # Pedido já marcado como pronto não volta pra "em produção" se o
             # pagamento for aprovado de novo (webhook repetido).
@@ -837,15 +935,13 @@ def release_paid_order_to_production(order_id: str):
     drop_folder.mkdir(parents=True, exist_ok=False)
 
     try:
-        for p in source_folder.iterdir():
+        # No servidor (STORE) as artes já estão no Storage e o PC da produção
+        # baixa direto de lá (sync_producao.py): copiar 500 MB pra uma pasta
+        # que ninguém abre só gastaria espaço. Aqui fica só o LEIA-ME.
+        for p in ([] if STORE else source_folder.iterdir()):
             if not p.is_file():
                 continue
-            if (
-                p.name == "pedido.json"
-                or p.name.startswith("ARTE_PRODUCAO")
-                or p.name.startswith("POSICAO_")
-                or p.name.startswith("ARTE_DIGITAL")
-            ):
+            if is_production_file(p.name):
                 shutil.copy2(p, drop_folder / p.name)
 
         resumo: dict[str, Any] = {
@@ -857,10 +953,8 @@ def release_paid_order_to_production(order_id: str):
             "liberado_em": time.strftime("%Y-%m-%d %H:%M:%S"),
             "dados": data
         }
-        (drop_folder / "LEIA-ME-PRODUCAO.json").write_text(
-            json.dumps(resumo, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
+        readme.write_text(json.dumps(resumo, ensure_ascii=False, indent=2), encoding="utf-8")
+        cloud_put(readme)
 
         with db() as con:
             con.execute(
@@ -1120,6 +1214,8 @@ def backup_loop():
 def restore_database(source: Path):
     """python app.py --restaurar <arquivo>: com o servidor DESLIGADO. Antes de
     trocar, guarda o banco atual como backup "_antes" (dá pra voltar)."""
+    if IS_PG:
+        sys.exit(PG_BACKUP_MSG)
     import socket
     with socket.socket() as s:
         s.settimeout(0.5)
@@ -1146,6 +1242,11 @@ def restore_database(source: Path):
 
 
 init_db()
+if STORE:
+    try:
+        STORE.ensure_bucket()
+    except cloud_storage.StorageError as exc:
+        print(f"[storage] AVISO: não consegui conferir o bucket do Supabase: {exc}")
 
 # Modalidades desligadas temporariamente (a opção também está comentada no
 # index.html). Para reativar uma, basta tirar daqui.
@@ -1158,7 +1259,17 @@ SLEEVES_ENABLED = False
 # (inclusive as de admin) pra qualquer visitante.
 app = FastAPI(title="Ripfire Studio Local", version="2.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-app.mount("/media", StaticFiles(directory=BASE / "media"), name="media")
+MEDIA_ROOT = (BASE / "media").resolve()
+
+
+@app.get("/media/{file_path:path}")
+def media_file(file_path: str):
+    """Catálogo, mockups e artes da IA. Antes era uma pasta estática; agora,
+    se o arquivo não está no disco (servidor reiniciado), vem do Storage."""
+    path = (MEDIA_ROOT / file_path).resolve()
+    if MEDIA_ROOT not in path.parents or not cloud_get(path):
+        raise HTTPException(404, "Arquivo não encontrado.")
+    return FileResponse(path, headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/")
@@ -1229,6 +1340,8 @@ def get_config() -> dict[str, Any]:
         "premium_days": digital_cfg().get("premium_days"),
         # Com o Mercado Pago configurado, criar o pedido já leva pro pagamento.
         "online_payment": bool(mp_token()),
+        # Com o Supabase Storage, as artes do pedido vão do navegador direto pra ele.
+        "direct_upload": bool(STORE),
         # Métricas e anúncios (só carregam no navegador com o consentimento do visitante).
         "ga4_id": tracking_id("GA4_MEASUREMENT_ID", r"G-[A-Z0-9]{4,20}"),
         "meta_pixel_id": tracking_id("META_PIXEL_ID", r"\d{6,20}"),
@@ -1368,7 +1481,7 @@ def get_profile(customer: dict[str, Any] = Depends(require_customer)) -> dict[st
         ).fetchall()
         downloads = con.execute(
             """SELECT d.art_id, MAX(d.art_name) AS art_name, MAX(d.created_at) AS last_at, COUNT(*) AS times,
-                      MAX(a.id IS NOT NULL) AS available, MAX(c.name) AS category, MAX(c.access) AS access
+                      MAX(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) AS available, MAX(c.name) AS category, MAX(c.access) AS access
                FROM digital_downloads d
                LEFT JOIN library_arts a ON a.id=d.art_id
                LEFT JOIN library_categories c ON c.id=a.category_id
@@ -1392,7 +1505,7 @@ def my_order_placement(order_id: str, side: str, customer: dict[str, Any] = Depe
         raise HTTPException(404, "Foto não encontrada.")
     info = json.loads(row["data_json"]).get(key) or {}
     path = Path(row["folder_path"]) / str(info.get("file") or "")
-    if not info.get("file") or not path.is_file():
+    if not info.get("file") or not cloud_get(path):
         raise HTTPException(404, "Foto não encontrada.")
     return FileResponse(path)
 
@@ -1609,9 +1722,13 @@ def delete_my_account(payload: AccountDelete, customer: dict[str, Any] = Depends
         con.execute("UPDATE privacy_requests SET customer_id=NULL WHERE customer_id=?", (customer["id"],))
         con.execute("DELETE FROM customers WHERE id=?", (customer["id"],))
     for o in unpaid:
+        report_dir = SOMENTE_DTF_DIR / f"{o['order_number']}__{safe_name(o['customer_name'])}"
         if o["folder_path"]:
             shutil.rmtree(o["folder_path"], ignore_errors=True)
-        shutil.rmtree(SOMENTE_DTF_DIR / f"{o['order_number']}__{safe_name(o['customer_name'])}", ignore_errors=True)
+            cloud_delete_dir(o["folder_path"])
+        shutil.rmtree(report_dir, ignore_errors=True)
+        cloud_delete_dir(report_dir)
+    cleanup_staged_uploads(customer["id"], max_age=0)
     return {"ok": True, "deleted_unpaid_orders": len(unpaid)}
 
 
@@ -1641,8 +1758,14 @@ def update_privacy_request(request_id: str, payload: dict[str, Any]) -> dict[str
     return {"ok": True}
 
 
+PG_BACKUP_MSG = ("O banco está no Supabase, que faz o backup sozinho todo dia: veja e restaure em "
+                 "Supabase > Database > Backups.")
+
+
 @app.get("/api/admin/backups", dependencies=[Depends(require_admin)])
 def admin_list_backups() -> dict[str, Any]:
+    if IS_PG:
+        raise HTTPException(400, PG_BACKUP_MSG)
     return {
         "folder": str(BACKUP_DIR), "every_hours": backup_hours(), "keep_days": float(BACKUP_CFG.get("keep_days") or 14),
         "backups": [{"name": p.name, "size": p.stat().st_size, "created_at": p.stat().st_mtime} for p in list_backups()],
@@ -1651,6 +1774,8 @@ def admin_list_backups() -> dict[str, Any]:
 
 @app.post("/api/admin/backups", dependencies=[Depends(require_admin)])
 def admin_backup_now() -> dict[str, Any]:
+    if IS_PG:
+        raise HTTPException(400, PG_BACKUP_MSG)
     try:
         dest = backup_database("manual")
     except Exception as exc:
@@ -1662,7 +1787,7 @@ def admin_backup_now() -> dict[str, Any]:
 def admin_download_backup(name: str):
     # Só nomes no formato dos backups: nada de "../" pra ler outros arquivos.
     path = BACKUP_DIR / name
-    if not BACKUP_NAME.fullmatch(name) or not path.is_file():
+    if IS_PG or not BACKUP_NAME.fullmatch(name) or not path.is_file():
         raise HTTPException(404, "Backup não encontrado.")
     return FileResponse(path, media_type="application/octet-stream", filename=name)
 
@@ -1691,9 +1816,20 @@ def metric_hit(payload: PageHit, request: Request):
     with db() as con:
         con.execute(
             """INSERT INTO page_hits (day,page,hits) VALUES(?,?,1)
-               ON CONFLICT(day,page) DO UPDATE SET hits=hits+1""",
+               ON CONFLICT(day,page) DO UPDATE SET hits=page_hits.hits+1""",
             (time.strftime("%Y-%m-%d"), payload.page)
         )
+
+
+def local_day_sql(col: str) -> str:
+    """Dia (AAAA-MM-DD) no fuso da loja de um horário em segundos. No Render o
+    relógio do servidor é UTC: o fuso vem da variável TZ (America/Sao_Paulo)."""
+    if not IS_PG:
+        return f"date({col},'unixepoch','localtime')"
+    tz = os.getenv("TZ", "").strip() or "America/Sao_Paulo"
+    if not re.fullmatch(r"[A-Za-z_]+(?:/[A-Za-z_+\-]+)*", tz):
+        tz = "America/Sao_Paulo"
+    return f"to_char(to_timestamp({col}) AT TIME ZONE '{tz}', 'YYYY-MM-DD')"
 
 
 @app.get("/api/admin/metrics", dependencies=[Depends(require_admin)])
@@ -1701,15 +1837,16 @@ def admin_metrics(days: int = 30) -> dict[str, Any]:
     days = max(1, min(days, 365))
     since_ts = time.time() - days * 86400
     since_day = time.strftime("%Y-%m-%d", time.localtime(since_ts))
+    day_expr = local_day_sql("created_at")
     with db() as con:
         hits = [dict(r) for r in con.execute(
             "SELECT day, page, hits FROM page_hits WHERE day >= ? ORDER BY day", (since_day,))]
         orders = [dict(r) for r in con.execute(
-            """SELECT date(created_at,'unixepoch','localtime') AS day, sale_type, payment_status, status, total
+            f"""SELECT {day_expr} AS day, sale_type, payment_status, status, total
                FROM orders WHERE created_at >= ?""", (since_ts,))]
         signups = [dict(r) for r in con.execute(
-            """SELECT date(created_at,'unixepoch','localtime') AS day, COUNT(*) AS n FROM customers
-               WHERE created_at >= ? GROUP BY day""", (since_ts,))]
+            f"""SELECT {day_expr} AS day, COUNT(*) AS n FROM customers
+               WHERE created_at >= ? GROUP BY 1""", (since_ts,))]
     return {"days": days, "since": since_day, "hits": hits, "orders": orders, "signups": signups}
 
 
@@ -1742,6 +1879,11 @@ async def create_artwork(
     with dest.open("wb") as f:
         while chunk := await artwork.read(1024 * 1024):
             f.write(chunk)
+    try:
+        await run_in_threadpool(cloud_put, dest)
+    except cloud_storage.StorageError as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(502, f"Não foi possível guardar a arte no Supabase: {exc}")
 
     preview_url = f"/media/artworks/{filename}"
 
@@ -1801,6 +1943,11 @@ async def create_shirt_mockup(
     with dest.open("wb") as f:
         while chunk := await photo.read(1024 * 1024):
             f.write(chunk)
+    try:
+        await run_in_threadpool(cloud_put, dest)
+    except cloud_storage.StorageError as exc:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(502, f"Não foi possível guardar a foto no Supabase: {exc}")
     preview_url = f"/media/mockups/{filename}"
 
     with db() as con:
@@ -1812,6 +1959,7 @@ async def create_shirt_mockup(
         ).fetchall()
         for row in old:
             Path(row["file_path"]).unlink(missing_ok=True)
+            cloud_delete(row["file_path"])
         con.execute("DELETE FROM shirt_mockups WHERE model_id=? AND color=? AND side=?", (model_id, color, side))
         con.execute(
             """INSERT INTO shirt_mockups
@@ -1830,6 +1978,7 @@ def delete_shirt_mockup(mockup_id: str):
         if not row:
             raise HTTPException(404, "Mockup não encontrado.")
         Path(row["file_path"]).unlink(missing_ok=True)
+        cloud_delete(row["file_path"])
         con.execute("DELETE FROM shirt_mockups WHERE id=?", (mockup_id,))
     return {"ok": True}
 
@@ -1864,7 +2013,7 @@ def get_library() -> dict[str, Any]:
     with db() as con:
         rows = con.execute(
             """SELECT c.*, (SELECT COUNT(*) FROM library_arts a WHERE a.category_id=c.id) AS art_count
-               FROM library_categories c ORDER BY c.name COLLATE NOCASE"""
+               FROM library_categories c ORDER BY lower(c.name)"""
         ).fetchall()
     return {"categories": [dict(r) for r in rows]}
 
@@ -1895,7 +2044,7 @@ def library_art_file(art_id: str, download: bool = False, customer: dict[str, An
     if art["access"] == "premium" and not premium_active(customer):
         raise HTTPException(403, "Essa arte é premium. Assine o premium para baixar e usar.")
     path = Path(art["file_path"])
-    if not path.is_file():
+    if not cloud_get(path):
         raise HTTPException(404, "Arquivo da arte não encontrado.")
     if not download:
         return FileResponse(path)
@@ -1999,6 +2148,13 @@ async def upload_library_arts(
             dest.unlink(missing_ok=True)
             skipped.append(filename)
             continue
+        try:
+            await run_in_threadpool(cloud_put, dest)
+        except cloud_storage.StorageError as exc:
+            print(f"[storage] {filename}: {exc}")
+            dest.unlink(missing_ok=True)
+            skipped.append(filename)
+            continue
         with db() as con:
             con.execute(
                 "INSERT INTO library_arts (id,created_at,category_id,name,file_path) VALUES(?,?,?,?,?)",
@@ -2060,7 +2216,7 @@ def subscribe_premium(
                     )
                 )
             break
-        except sqlite3.IntegrityError:
+        except dbcompat.IntegrityError:
             # Mesmo caso do create_order: número repetido no mesmo segundo.
             if attempt:
                 raise
@@ -2118,10 +2274,141 @@ def ai_generate(payload: dict[str, Any], customer: dict[str, Any] = Depends(requ
         gid = uuid.uuid4().hex[:12]
         dest = GENERATED_DIR / f"{gid}.png"
         dest.write_bytes(image_bytes)
+        cloud_put(dest)
 
         return {"ok": True, "url": f"/media/generated/{gid}.png", "model": model}
     except Exception as exc:
         raise HTTPException(500, f"Falha ao gerar imagem: {exc}")
+
+
+# ---------- Envio direto das artes pro Supabase ----------
+# Uma chapa de DTF chega a 500 MB. Em vez de passar pelo servidor do site
+# (o proxy do Render pode recusar envios grandes, e o disco dele é
+# temporário), o navegador pede aqui links de envio assinados e manda cada
+# arquivo direto pro Storage, numa pasta provisória do cliente. Depois cria
+# o pedido mandando só o "token" dessa pasta: o servidor confere os
+# arquivos e move pra pasta do pedido, sem baixar nada.
+# Campo do formulário -> (nome do arquivo no pedido, chave no pedido.json).
+ORDER_FILE_FIELDS = {
+    "design": (None, "production_art"),  # ARTE_PRODUCAO (chapa) ou ARTE_PRODUCAO_FRENTE
+    "design_back": ("ARTE_PRODUCAO_COSTAS", "production_art_back"),
+    "design_sleeve_right": ("ARTE_PRODUCAO_MANGA_DIREITA", "production_art_sleeve_right"),
+    "design_sleeve_left": ("ARTE_PRODUCAO_MANGA_ESQUERDA", "production_art_sleeve_left"),
+    "placement_front": ("POSICAO_FRENTE", "placement_front"),
+    "placement_back": ("POSICAO_COSTAS", "placement_back"),
+}
+UPLOAD_TOKEN = re.compile(r"\d{10}-[0-9a-f]{16}")
+UPLOAD_MAX_AGE = 86400  # pasta provisória esquecida (pedido desistido) some depois de 1 dia
+
+
+def staged_ext(field: str) -> str:
+    return ".jpg" if field.startswith("placement") else ".png"
+
+
+def staging_prefix(customer_id: str, token: str = "") -> str:
+    return f"uploads/{customer_id}" + (f"/{token}" if token else "")
+
+
+def cleanup_staged_uploads(customer_id: str, max_age: float = UPLOAD_MAX_AGE):
+    """Apaga as pastas provisórias do cliente mais velhas que max_age (0 = todas)."""
+    if not STORE:
+        return
+    try:
+        for token in STORE.list_folders(staging_prefix(customer_id)):
+            if UPLOAD_TOKEN.fullmatch(token) and time.time() - int(token.split("-")[0]) >= max_age:
+                STORE.delete_dir(prefix_key=staging_prefix(customer_id, token))
+    except cloud_storage.StorageError as exc:
+        print(f"[storage] limpeza de envios: {exc}")
+
+
+def image_info_bytes(head: bytes) -> dict[str, int | bool | None]:
+    """Igual ao image_info, lendo só o começo do arquivo."""
+    import io
+    result: dict[str, int | bool | None] = {"width_px": None, "height_px": None, "has_alpha": None}
+    try:
+        with Image.open(io.BytesIO(head)) as im:
+            result["width_px"], result["height_px"] = im.size
+            result["has_alpha"] = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+    except Exception:
+        pass
+    return result
+
+
+class UploadRequest(BaseModel):
+    files: list[dict[str, Any]]
+
+
+@app.post("/api/orders/uploads")
+def create_order_uploads(payload: UploadRequest, buyer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    if not STORE:
+        raise HTTPException(503, "Envio direto não configurado neste servidor.")
+    check_rate_limit(f"uploads:{buyer['id']}", 30, 3600,
+                     "Muitos envios em pouco tempo. Aguarde um pouco e tente de novo.")
+    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    fields: list[str] = []
+    for f in payload.files[:len(ORDER_FILE_FIELDS)]:
+        field = str(f.get("field") or "")
+        if field not in ORDER_FILE_FIELDS or field in fields:
+            raise HTTPException(400, "Arquivo do pedido inválido.")
+        if int(f.get("size") or 0) > max_mb * 1024 * 1024:
+            raise HTTPException(413, f"Arquivo grande demais (máximo {max_mb} MB).")
+        fields.append(field)
+    if not fields:
+        raise HTTPException(400, "Nenhum arquivo para enviar.")
+    cleanup_staged_uploads(buyer["id"])
+    token = f"{int(time.time())}-{secrets.token_hex(8)}"
+    try:
+        urls = {
+            field: STORE.signed_upload_url(f"{staging_prefix(buyer['id'], token)}/{field}{staged_ext(field)}")
+            for field in fields
+        }
+    except cloud_storage.StorageError as exc:
+        print(f"[storage] {exc}")
+        raise HTTPException(502, "Não foi possível preparar o envio das artes. Tente de novo em instantes.")
+    return {"token": token, "urls": urls}
+
+
+def take_staged_files(buyer_id: str, token: str, folder: Path, sale_type: str, data: dict[str, Any]):
+    """Move os arquivos que o navegador mandou pro Storage (pasta provisória)
+    pra pasta do pedido e anota tamanho/transparência no pedido, como o
+    envio pelo formulário fazia. Roda numa thread (só chamadas de rede)."""
+    assert STORE
+    if not UPLOAD_TOKEN.fullmatch(token):
+        raise HTTPException(400, "Envio das artes inválido. Tente de novo.")
+    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    dpi = int(CONFIG.get("dpi") or 300)
+    staged = {Path(f["name"]).stem: f for f in STORE.list_files(prefix_key=staging_prefix(buyer_id, token))}
+    if not staged:
+        raise HTTPException(400, "As artes não chegaram ao servidor. Tente finalizar o pedido de novo.")
+    for field, (base_name, data_key) in ORDER_FILE_FIELDS.items():
+        item = staged.get(field)
+        if not item:
+            continue
+        if field.endswith("sleeve_right") or field.endswith("sleeve_left"):
+            if not SLEEVES_ENABLED:
+                raise HTTPException(400, "Estampa na manga está desativada no momento.")
+        if item["size"] > max_mb * 1024 * 1024:
+            raise HTTPException(413, f"Arquivo grande demais (máximo {max_mb} MB).")
+        if base_name is None:
+            base_name = "ARTE_PRODUCAO" if sale_type == "DTF_ONLY" else "ARTE_PRODUCAO_FRENTE"
+        dest = folder / f"{base_name}{staged_ext(field)}"
+        head = STORE.read_head(item["key"])
+        if dest.suffix == ".png" and png_with_dpi(head, dpi) != head:
+            # O navegador já grava o DPI antes de enviar; isto é só pra uma
+            # página antiga em cache: baixa, corrige e sobe de novo.
+            local = folder / f".{field}.tmp"
+            STORE.download(local, item["key"])
+            with local.open("rb") as src, dest.open("wb") as out:
+                out.write(png_with_dpi(src.read(1024 * 1024), dpi))
+                shutil.copyfileobj(src, out, 1024 * 1024)
+            local.unlink(missing_ok=True)
+            STORE.upload(dest)
+            STORE.delete_keys([item["key"]])
+            dest.unlink(missing_ok=True)  # o Storage é a cópia que vale
+            head = png_with_dpi(head, dpi)
+        else:
+            STORE.move(item["key"], STORE.key_for(dest))
+        data[data_key] = {"file": dest.name, **image_info_bytes(head)}
 
 
 @app.post("/api/orders")
@@ -2134,6 +2421,7 @@ async def create_order(
     design_sleeve_left: UploadFile | None = File(None),
     placement_front: UploadFile | None = File(None),
     placement_back: UploadFile | None = File(None),
+    upload_token: str | None = Form(None),
     buyer: dict[str, Any] = Depends(require_customer),
 ) -> dict[str, Any]:
     # Dono do pedido (aparece em "Minha conta"). Antes o login era exigido só
@@ -2188,6 +2476,10 @@ async def create_order(
         digital_artwork_row = dict(row)
 
     try:
+        if upload_token:
+            if not STORE:
+                raise HTTPException(400, "Envio direto não configurado neste servidor.")
+            await run_in_threadpool(take_staged_files, buyer["id"], upload_token, folder, sale_type, data)
         if design is not None and design.filename:
             ext = Path(design.filename).suffix.lower() or ".png"
             # Na camiseta o "design" é a frente; no Somente DTF é a chapa.
@@ -2227,7 +2519,7 @@ async def create_order(
             src = Path(digital_artwork_row["file_path"])
             ext = src.suffix.lower() or ".png"
             digital_dest = folder / f"ARTE_DIGITAL{ext}"
-            if src.exists():
+            if await run_in_threadpool(cloud_get, src):
                 shutil.copy2(src, digital_dest)
                 data["digital_art_file"] = digital_dest.name
             else:
@@ -2248,6 +2540,10 @@ async def create_order(
             encoding="utf-8"
         )
 
+        # No servidor, a pasta do pedido sobe pro Storage antes de o pedido
+        # existir no banco: pedido salvo sem as artes não acontece.
+        await run_in_threadpool(cloud_put_dir, folder)
+
         total = float(data.get("total", 0))
         try:
             with db() as con:
@@ -2265,7 +2561,7 @@ async def create_order(
                         buyer["id"]
                     )
                 )
-        except sqlite3.IntegrityError:
+        except dbcompat.IntegrityError:
             # Dois pedidos criados no mesmíssimo segundo podem colidir
             # no número (order_number é calculado antes do INSERT, não é
             # atômico). Antes isso derrubava o pedido com um erro cru;
@@ -2276,6 +2572,7 @@ async def create_order(
             (folder / "pedido.json").write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            await run_in_threadpool(cloud_put, folder / "pedido.json")
             with db() as con:
                 con.execute(
                     """INSERT INTO orders
@@ -2293,7 +2590,7 @@ async def create_order(
                 )
 
         if sale_type == "DTF_ONLY":
-            write_dtf_report(order_number, name, data.get("sources") or [])
+            await run_in_threadpool(write_dtf_report, order_number, name, data.get("sources") or [])
 
         return {
             "ok": True,
@@ -2302,8 +2599,12 @@ async def create_order(
             "status": "AGUARDANDO_PAGAMENTO",
             "total": total
         }
-    except Exception:
+    except Exception as exc:
         shutil.rmtree(folder, ignore_errors=True)
+        await run_in_threadpool(cloud_delete_dir, folder)
+        if isinstance(exc, cloud_storage.StorageError):
+            print(f"[storage] pedido não criado: {exc}")
+            raise HTTPException(502, "Não foi possível guardar as artes do pedido. Tente de novo em instantes.")
         raise
 
 
@@ -2373,10 +2674,11 @@ def download_order_files(order_id: str):
     files: list[Path] = []
     # A pasta de produção (quando pago) repete os arquivos e soma o LEIA-ME.
     for folder in (row["folder_path"], row["production_drop_path"]):
+        cloud_get_dir(folder)  # no servidor, traz do Storage o que não está no disco
         if folder and Path(folder).is_dir():
-            files += [p for p in Path(folder).iterdir() if p.is_file()]
+            files += [p for p in Path(folder).iterdir() if p.is_file() and not p.name.endswith(".baixando")]
     report = SOMENTE_DTF_DIR / base / "RELATORIO_ARTES.txt"
-    if report.is_file():
+    if cloud_get(report):
         files.append(report)
     if not files:
         raise HTTPException(404, "Os arquivos deste pedido não estão mais no servidor.")
@@ -2392,6 +2694,33 @@ def download_order_files(order_id: str):
         tmp.name, media_type="application/zip", filename=f"{base}.zip",
         background=BackgroundTask(os.unlink, tmp.name)  # apaga o zip depois de enviar
     )
+
+
+@app.get("/api/admin/orders/{order_id}/file-links", dependencies=[Depends(require_admin)])
+def order_file_links(order_id: str) -> dict[str, Any]:
+    """Links assinados (valem 1 hora) pra cada arquivo de produção do pedido,
+    direto do Supabase Storage. É o que o sync_producao.py usa no PC da
+    produção: baixa 500 MB sem passar pelo servidor do site."""
+    if not STORE:
+        raise HTTPException(400, "Sem Supabase Storage: use /api/admin/orders/{id}/files.")
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["sale_type"] == "PREMIUM_SUB":
+        raise HTTPException(400, "Pedido de premium não tem arquivos.")
+    report = SOMENTE_DTF_DIR / f"{row['order_number']}__{safe_name(row['customer_name'])}" / "RELATORIO_ARTES.txt"
+    try:
+        found = [f for f in STORE.list_files(Path(row["folder_path"])) if is_production_file(f["name"])]
+        if row["production_drop_path"]:
+            found += STORE.list_files(Path(row["production_drop_path"]))
+        found += [f for f in STORE.list_files(report.parent) if f["name"] == report.name]
+        links = [{"name": f["name"], "size": f["size"], "url": STORE.signed_download_url(f["key"])} for f in found]
+    except cloud_storage.StorageError as exc:
+        print(f"[storage] {exc}")
+        raise HTTPException(502, "Não foi possível falar com o Supabase Storage.")
+    if not links:
+        raise HTTPException(404, "Os arquivos deste pedido não estão no Storage.")
+    return {"folder_name": production_folder_name(row), "files": links}
 
 
 @app.post("/api/payments/webhook")
@@ -2521,6 +2850,7 @@ PUBLIC_ROUTES = {
     # Vitrine (o que qualquer visitante vê)
     ("GET", "/api/config"), ("GET", "/api/artworks"), ("GET", "/api/shirt-mockups"), ("GET", "/api/library"),
     ("GET", "/api/library/categories/{category_id}/arts"), ("GET", "/api/library/arts/{art_id}/thumb"),
+    ("GET", "/media/{file_path:path}"),
     # Entrar, criar conta e sair (com limite de tentativas)
     ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
     # Pagamentos: conferidos pelo segredo do webhook ou consultando a API do Mercado Pago
@@ -2580,7 +2910,7 @@ if __name__ == "__main__" and "--restaurar" in sys.argv:
 
 if __name__ == "__main__":
     import uvicorn
-    if BACKUP_CFG.get("enabled", True):
+    if BACKUP_CFG.get("enabled", True) and not IS_PG:
         threading.Thread(target=backup_loop, daemon=True).start()
     if plaintext_admin_users():
         print("[aviso] Senha de admin em texto no config.json (" + ", ".join(plaintext_admin_users()) + ")."

@@ -1,0 +1,34 @@
+# Deploy do Ripfire Studio no Render (lido pelo "Blueprint" do Render).
+# Os valores com sync: false são preenchidos no painel do Render na hora de
+# criar o serviço: eles têm senhas e não vão pro GitHub.
+# O config.json (senhas do Admin) sobe como Secret File: veja DEPLOY_RENDER.md.
+services:
+  - type: web
+    name: ripfire-studio
+    runtime: python
+    plan: starter
+    # Mesma região do Supabase (East US / North Virginia): cada consulta ao banco fica rápida.
+    region: virginia
+    buildCommand: pip install -r requirements.txt
+    # --proxy-headers: o app vê o IP real do visitante (limite de tentativas de login por IP).
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /api/config
+    envVars:
+      - key: TZ
+        value: America/Sao_Paulo
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: ripfire
+      - key: SITE_URL
+        sync: false
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false

@@ -5,3 +5,6 @@ Pillow>=12.0.0
 python-dotenv==1.0.1
 openai>=1.0.0
 google-auth>=2.35.0
+# Postgres do Supabase (só é usado com DATABASE_URL definido; no PC sem ela continua o SQLite)
+psycopg[binary]>=3.2
+psycopg-pool>=3.2

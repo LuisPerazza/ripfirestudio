@@ -23,6 +23,8 @@ Antes da primeira vez:
    a chave; vazio = desligado.
 
 Para publicar numa VPS com domínio e HTTPS, siga o [DEPLOY.md](DEPLOY.md).
+Para publicar no Render com banco e arquivos no Supabase, siga o
+[DEPLOY_RENDER.md](DEPLOY_RENDER.md).
 
 ## O que o site faz
 
@@ -66,6 +68,10 @@ Para publicar numa VPS com domínio e HTTPS, siga o [DEPLOY.md](DEPLOY.md).
 | `PRODUCAO_PAGA/`, `SomenteDTFs/` | Cópias para a produção depois do pagamento |
 | `media/` | Artes do catálogo, mockups e imagens geradas por IA |
 | `deploy/` | Serviço, nginx e backup diário para a VPS |
+| `dbcompat.py`, `cloud_storage.py` | Banco (SQLite no PC, Postgres do Supabase no Render) e arquivos no Supabase Storage |
+| `render.yaml` | Configuração do serviço no Render |
+| `migrar_para_supabase.py` | Leva banco e arquivos do PC para o Supabase (uma vez) |
+| `sync_producao.py`, `sincronizar_producao.bat` | No PC da produção: baixa os pedidos pagos do site |
 | `docs/historico/` | Anotações de versões antigas (só para consulta) |
 
 ## Antes de abrir para clientes
