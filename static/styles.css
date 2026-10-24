@@ -480,3 +480,10 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .shirt-help .kbd-help{margin:0}
 .shirt-help kbd{background:#f4f4f1}
 .sh-ico{color:var(--accent);font-weight:800}
+
+/* Imagem escolhida na caixa "Sua imagem" (DTF): miniatura e nome dentro da caixa */
+.upload-tool .gang-drop.has-file{padding:16px 12px;border-style:solid;border-color:#cdb8d8}
+.upload-tool .gang-drop-preview{flex-direction:column;align-items:center;justify-content:center;gap:8px;width:100%;min-width:0;text-align:center}
+.upload-tool .gang-drop-preview img{width:96px;height:96px;padding:6px;border-radius:12px;background:repeating-conic-gradient(#e2e2de 0 25%,#f2f2ef 0 50%) 0 0/12px 12px;border:1px solid #d6d6d1;box-shadow:0 4px 12px rgba(0,0,0,.08)}
+.upload-tool .gang-drop-preview span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;max-width:100%;overflow:hidden;white-space:normal;overflow-wrap:anywhere;font-size:12px;font-weight:700;color:var(--ink);line-height:1.35}
+.upload-tool .gang-drop-preview::after{content:'Clique ou arraste outra pra trocar';font-size:11px;color:var(--muted)}
