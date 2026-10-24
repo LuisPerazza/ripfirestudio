@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=38">
+  <link rel="stylesheet" href="/static/styles.css?v=39">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -109,14 +109,14 @@
       </section>
 
       <section class="panel shirt-only" id="addArtPanel">
-        <h2>Adicionar arte</h2>
-        <div class="tool">
+        <h2 class="add-title">Adicionar arte</h2>
+        <div class="tool upload-tool">
           <label for="uploadArt">Sua imagem</label>
           <div id="shirtDrop" class="gang-drop">
             <input id="uploadArt" type="file" accept="image/png,image/jpeg,image/webp">
             <div class="gang-drop-empty">
-              <span class="gang-drop-icon">⬆</span>
-              <span>Clique ou arraste uma imagem aqui<br><small>PNG, JPG ou WEBP · vai direto pra camisa</small></span>
+              <span class="gang-drop-icon" aria-hidden="true">⬆</span>
+              <span class="drop-text"><b>Clique ou arraste sua imagem</b><small>PNG, JPG ou WEBP · vai direto pra camisa</small></span>
             </div>
           </div>
         </div>
@@ -138,14 +138,14 @@
       </section>
 
       <section class="panel gang-only" id="gangAddPanel" style="display:none">
-        <h2>Adicionar imagem</h2>
-        <div class="tool">
+        <h2 class="add-title">Adicionar imagem</h2>
+        <div class="tool upload-tool">
           <label for="gangUpload">Sua imagem</label>
           <div id="gangDrop" class="gang-drop">
             <input id="gangUpload" type="file" accept="image/png,image/jpeg,image/webp">
             <div class="gang-drop-empty">
-              <span class="gang-drop-icon">⬆</span>
-              <span>Clique ou arraste uma imagem aqui<br><small>PNG, JPG ou WEBP</small></span>
+              <span class="gang-drop-icon" aria-hidden="true">⬆</span>
+              <span class="drop-text"><b>Clique ou arraste sua imagem</b><small>PNG, JPG ou WEBP</small></span>
             </div>
             <div class="gang-drop-preview">
               <img id="gangDropImg" alt="">
