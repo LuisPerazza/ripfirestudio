@@ -907,7 +907,7 @@ def production_folder_name(row: dict[str, Any]) -> str:
 
 def is_production_file(name: str) -> bool:
     """O que vai pra produção: as artes, as fotos de posição e o pedido.json."""
-    return name == "pedido.json" or name.startswith(("ARTE_PRODUCAO", "POSICAO_", "ARTE_DIGITAL"))
+    return name == "pedido.json" or name.startswith(("ARTE_PRODUCAO", "POSICAO_", "ARTE_DIGITAL", "ORIGINAL_"))
 
 
 def release_paid_order_to_production(order_id: str):
@@ -2342,6 +2342,28 @@ ORDER_FILE_FIELDS = {
     "placement_back": ("POSICAO_COSTAS", "placement_back"),
 }
 UPLOAD_TOKEN = re.compile(r"\d{10}-[0-9a-f]{16}")
+# Somente DTF: cada arte da chapa vai também separada, no arquivo original do
+# cliente (source_1, source_2...). Vira ORIGINAL_01.pdf etc. na pasta do pedido.
+SOURCE_FIELD = re.compile(r"source_([1-9]\d?)")
+SOURCE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".pdf"}
+SOURCE_FORMATS = {".pdf": "pdf", ".tif": "tiff", ".tiff": "tiff"}  # o resto conta como png
+
+
+def source_ext(value: Any) -> str:
+    ext = str(value or "").lower()
+    if not ext.startswith("."):
+        ext = "." + ext
+    if ext not in SOURCE_EXTS:
+        raise HTTPException(400, "Use arquivos PNG, PDF, TIFF, JPG ou WEBP.")
+    return ext
+
+
+def note_source_file(data: dict[str, Any], number: int, file_name: str):
+    """Anota no pedido qual arquivo original é de cada arte da chapa."""
+    sources = data.get("sources")
+    if isinstance(sources, list) and 0 < number <= len(sources) and isinstance(sources[number - 1], dict):
+        sources[number - 1]["file"] = file_name
+        sources[number - 1]["format"] = SOURCE_FORMATS.get(Path(file_name).suffix.lower(), "png")
 UPLOAD_MAX_AGE = 86400  # pasta provisória esquecida (pedido desistido) some depois de 1 dia
 
 
@@ -2389,22 +2411,24 @@ def create_order_uploads(payload: UploadRequest, buyer: dict[str, Any] = Depends
     check_rate_limit(f"uploads:{buyer['id']}", 30, 3600,
                      "Muitos envios em pouco tempo. Aguarde um pouco e tente de novo.")
     max_mb = int(CONFIG.get("max_upload_mb") or 600)
-    fields: list[str] = []
-    for f in payload.files[:len(ORDER_FILE_FIELDS)]:
+    fields: dict[str, str] = {}  # campo -> extensão
+    if len(payload.files) > len(ORDER_FILE_FIELDS) + 99:
+        raise HTTPException(400, "Artes demais num pedido só.")
+    for f in payload.files:
         field = str(f.get("field") or "")
-        if field not in ORDER_FILE_FIELDS or field in fields:
+        if field in fields or not (field in ORDER_FILE_FIELDS or SOURCE_FIELD.fullmatch(field)):
             raise HTTPException(400, "Arquivo do pedido inválido.")
         if int(f.get("size") or 0) > max_mb * 1024 * 1024:
             raise HTTPException(413, f"Arquivo grande demais (máximo {max_mb} MB).")
-        fields.append(field)
+        fields[field] = source_ext(f.get("ext")) if field.startswith("source_") else staged_ext(field)
     if not fields:
         raise HTTPException(400, "Nenhum arquivo para enviar.")
     cleanup_staged_uploads(buyer["id"])
     token = f"{int(time.time())}-{secrets.token_hex(8)}"
     try:
         urls = {
-            field: STORE.signed_upload_url(f"{staging_prefix(buyer['id'], token)}/{field}{staged_ext(field)}")
-            for field in fields
+            field: STORE.signed_upload_url(f"{staging_prefix(buyer['id'], token)}/{field}{ext}")
+            for field, ext in fields.items()
         }
     except cloud_storage.StorageError as exc:
         print(f"[storage] {exc}")
@@ -2453,6 +2477,18 @@ def take_staged_files(buyer_id: str, token: str, folder: Path, sale_type: str, d
         else:
             STORE.move(item["key"], STORE.key_for(dest))
         data[data_key] = {"file": dest.name, **image_info_bytes(head)}
+    if sale_type != "DTF_ONLY":
+        return
+    for stem, item in staged.items():
+        m = SOURCE_FIELD.fullmatch(stem)
+        if not m:
+            continue
+        if item["size"] > max_mb * 1024 * 1024:
+            raise HTTPException(413, f"Arquivo grande demais (máximo {max_mb} MB).")
+        number = int(m.group(1))
+        dest = folder / f"ORIGINAL_{number:02d}{source_ext(Path(item['name']).suffix)}"
+        STORE.move(item["key"], STORE.key_for(dest))
+        note_source_file(data, number, dest.name)
 
 
 @app.post("/api/orders")
@@ -2556,6 +2592,17 @@ async def create_order(
                 "file": art_path.name,
                 **image_info(art_path),
             }
+
+        if sale_type == "DTF_ONLY" and not upload_token:
+            form = await request.form()
+            for key, upload in form.multi_items():
+                m = SOURCE_FIELD.fullmatch(key)
+                if not m or not hasattr(upload, "filename") or not upload.filename:
+                    continue
+                number = int(m.group(1))
+                dest = folder / f"ORIGINAL_{number:02d}{source_ext(Path(upload.filename).suffix)}"
+                await save_upload(upload, dest)
+                note_source_file(data, number, dest.name)
 
         if digital_artwork_row:
             # A venda de arte digital não tinha o arquivo comprado

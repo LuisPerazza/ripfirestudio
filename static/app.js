@@ -1162,9 +1162,10 @@ async function sendOrder(data,files,statusSel){
   fd.append('order_json',JSON.stringify(data));
   if(CONFIG.direct_upload&&files.length){
     const dpi=Number(CONFIG.dpi)||300;
-    const ready=await Promise.all(files.map(async([field,blob,name])=>[field,/\.png$/i.test(name)?await pngWithDpi(blob,dpi):blob]));
+    const ready=await Promise.all(files.map(async([field,blob,name])=>[field,/\.png$/i.test(name)&&!field.startsWith('source_')?await pngWithDpi(blob,dpi):blob,name]));
+    const ext=name=>((/\.[a-z0-9]+$/i.exec(name||'')||['.png'])[0]).toLowerCase();
     const r=await fetch('/api/orders/uploads',{method:'POST',headers:{...customerHeaders(),'Content-Type':'application/json'},
-      body:JSON.stringify({files:ready.map(([field,blob])=>({field,size:blob.size}))})});
+      body:JSON.stringify({files:ready.map(([field,blob,name])=>({field,size:blob.size,ext:ext(name)}))})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) return {r,d};
     let sent=0;
@@ -2222,16 +2223,78 @@ function onGangUpload(e){
   const f=e.target.files[0];
   if(f) handleGangFile(f);
 }
-function handleGangFile(f){
-  if(!f.type.startsWith('image/'))return stat('#gangAddStatus','Selecione um arquivo de imagem.',false);
-  handleGangImageURL(URL.createObjectURL(f), f.name);
+/* PDF e TIFF: o navegador não mostra sozinho. Os leitores (pdf.js e UTIF)
+   só são baixados quando o cliente escolhe um arquivo desses. O arquivo
+   original vai junto no pedido; a produção usa ele, não a prévia. */
+const GANG_LIBS={
+  pdf:['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'],
+  tiff:['https://cdnjs.cloudflare.com/ajax/libs/pako/1.0.11/pako.min.js','https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.min.js']
+};
+const gangLibLoads={};
+function loadScriptOnce(src){
+  return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;
+    s.onerror=()=>{s.remove();rej(new Error('Não foi possível abrir esse tipo de arquivo agora. Confira sua internet e tente de novo.'))};
+    document.head.appendChild(s);});
 }
-function handleGangImageURL(url,name,premiumId=null){
+function needGangLib(kind){
+  if(!gangLibLoads[kind]) gangLibLoads[kind]=(async()=>{for(const u of GANG_LIBS[kind]) await loadScriptOnce(u);})()
+    .catch(e=>{delete gangLibLoads[kind];throw e;});
+  return gangLibLoads[kind];
+}
+function gangFileKind(f){
+  const n=(f.name||'').toLowerCase();
+  if(f.type==='application/pdf'||n.endsWith('.pdf')) return 'pdf';
+  if(f.type==='image/tiff'||/\.tiff?$/.test(n)) return 'tiff';
+  if(/^image\/(png|jpeg|webp)$/.test(f.type)||/\.(png|jpe?g|webp)$/.test(n)) return 'png';
+  return null;
+}
+const canvasToURL=c=>new Promise((res,rej)=>c.toBlob(b=>b?res(URL.createObjectURL(b)):rej(new Error('Arquivo grande demais para mostrar.')),'image/png'));
+async function pdfPreview(f){
+  await needGangLib('pdf');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const doc=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;
+  const page=await doc.getPage(1), base=page.getViewport({scale:1});
+  // Prévia em até ~4000 px no lado maior (a produção usa o PDF original, em vetor).
+  const scale=Math.min(300/72, 4000/Math.max(base.width,base.height));
+  const vp=page.getViewport({scale}), c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(vp.width)); c.height=Math.max(1,Math.round(vp.height));
+  await page.render({canvasContext:c.getContext('2d'),viewport:vp,background:'rgba(0,0,0,0)'}).promise;
+  doc.destroy();
+  return {url:await canvasToURL(c), widthCm:base.width/72*2.54};
+}
+async function tiffPreview(f){
+  await needGangLib('tiff');
+  const buf=await f.arrayBuffer(), ifds=UTIF.decode(buf), ifd=ifds[0];
+  if(!ifd) throw new Error('Esse TIFF não tem imagem.');
+  UTIF.decodeImage(buf,ifd);
+  const rgba=UTIF.toRGBA8(ifd), c=document.createElement('canvas');
+  c.width=ifd.width; c.height=ifd.height;
+  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,rgba.length),ifd.width,ifd.height),0,0);
+  // Tamanho físico gravado no arquivo (XResolution, em dpi), quando existe.
+  const xr=Array.isArray(ifd.t282)?Number(ifd.t282[0]):Number(ifd.t282), unit=ifd.t296?Number(ifd.t296[0]):2;
+  const dpi=xr>0?(unit===3?xr*2.54:xr):0;
+  return {url:await canvasToURL(c), widthCm:dpi>=72?ifd.width/dpi*2.54:0};
+}
+async function handleGangFile(f){
+  const kind=gangFileKind(f);
+  if(!kind) return stat('#gangAddStatus','Use PNG, PDF, TIFF, JPG ou WEBP.',false);
+  if(kind==='png') return handleGangImageURL(URL.createObjectURL(f), f.name, null, {file:f,kind});
+  stat('#gangAddStatus',`Abrindo o ${kind.toUpperCase()}...`,true);
+  try{
+    const p=kind==='pdf'?await pdfPreview(f):await tiffPreview(f);
+    handleGangImageURL(p.url, f.name, null, {file:f,kind,widthCm:p.widthCm});
+  }catch(e){ console.error(e); stat('#gangAddStatus',e.message||'Não foi possível abrir esse arquivo.',false); }
+}
+let gangPendingSource=null; // {file, kind, widthCm} do arquivo que o cliente escolheu
+function handleGangImageURL(url,name,premiumId=null,source=null){
   const img=new Image();
   img.crossOrigin='anonymous';
   img.onload=()=>{
+    gangPendingSource=source;
     $('#gangWidthCm').dataset.ratio=String(img.height/img.width);
-    if(!$('#gangWidthCm').value)$('#gangWidthCm').value=18;
+    const natural=source&&source.widthCm>=3?Math.min(Number(source.widthCm.toFixed(1)),sheetWidthCm()-1.2):0;
+    if(natural) $('#gangWidthCm').value=natural;
+    else if(!$('#gangWidthCm').value)$('#gangWidthCm').value=18;
     $('#gangWidthCm').dataset.pendingUrl=url;
     $('#gangWidthCm').dataset.pendingName=name;
     $('#gangWidthCm').dataset.pendingPremium=premiumId||'';
@@ -2282,10 +2345,12 @@ function addGangImage(){
     url:$('#gangWidthCm').dataset.pendingUrl,
     name:$('#gangWidthCm').dataset.pendingName||'Sem título',
     premiumId:$('#gangWidthCm').dataset.pendingPremium||null,
-    wCm, hCm, qty
+    wCm, hCm, qty,
+    file:gangPendingSource?gangPendingSource.file:null,
+    kind:gangPendingSource?gangPendingSource.kind:'png'
   };
   gangItems.push(newItem);
-  gangPendingImg=null;
+  gangPendingImg=null; gangPendingSource=null;
   $('#gangUpload').value=''; $('#gangWidthCm').value=''; $('#gangHeightCm').value=''; $('#gangQty').value=1;
   delete $('#gangWidthCm').dataset.ratio;
   $('#gangDrop').classList.remove('has-file');
@@ -2707,6 +2772,23 @@ async function exportGangSheet(){
   if(!blob) throw new Error('A chapa ficou comprida demais pra gerar no navegador. Divida em dois pedidos.');
   return {blob, widthCm:width, heightCm:Number(heightCm.toFixed(2)), widthPx:ow, heightPx:oh, dpi};
 }
+/* Cada arte da chapa vai também separada, no arquivo original (PNG, PDF,
+   TIFF...). Arte da biblioteca ou da IA não tem arquivo: vai a imagem em PNG. */
+async function gangOriginalFiles(){
+  const out=[];
+  for(const [i,it] of gangItems.entries()){
+    let blob=it.file, name=it.file&&it.file.name;
+    if(!blob){
+      const c=document.createElement('canvas'); c.width=it.img.naturalWidth||it.img.width; c.height=it.img.naturalHeight||it.img.height;
+      c.getContext('2d').drawImage(it.img,0,0);
+      blob=await new Promise(r=>c.toBlob(r,'image/png'));
+      name=(it.name||'arte').replace(/\.[a-z0-9]+$/i,'')+'.png';
+      it.kind='png';
+    }
+    if(blob) out.push([`source_${i+1}`,blob,name]);
+  }
+  return out;
+}
 async function createGangOrder(){
   if(!currentCustomer){ openAuthModal(); return stat('#checkoutStatusGang','Entre ou crie uma conta antes de finalizar o pedido.',false); }
   if(!gangItems.length) return stat('#checkoutStatusGang','Adicione ao menos uma imagem.',false);
@@ -2721,11 +2803,13 @@ async function createGangOrder(){
       product:null,
       dtf_quantity:totalQty,
       design:{width_cm:p.widthCm,height_cm:p.heightCm,dpi:p.dpi,width_px:p.widthPx,height_px:p.heightPx},
-      sources:gangItems.map(it=>({type:'image',origin:it.premiumId?'PREMIUM':'UPLOAD',premium_id:it.premiumId||null,name:it.name,width_cm:it.wCm,height_cm:it.hCm,qty:it.qty})),
+      sources:gangItems.map(it=>({type:'image',origin:it.premiumId?'PREMIUM':'UPLOAD',premium_id:it.premiumId||null,name:it.name,width_cm:it.wCm,height_cm:it.hCm,qty:it.qty,format:it.kind||'png'})),
       total:Math.round(calcGangTotal()*100)/100,
       tracking:trackingContext()
     };
-    const {r,d}=await sendOrder(data,[['design',p.blob,'chapa_producao.png']],'#checkoutStatusGang');
+    stat('#checkoutStatusGang','Separando as artes...',true);
+    const originals=await gangOriginalFiles();
+    const {r,d}=await sendOrder(data,[['design',p.blob,'chapa_producao.png'],...originals],'#checkoutStatusGang');
     if(r.status===401){ logoutCustomer(); openAuthModal(); }
     if(!r.ok) throw new Error(orderError(r,d));
     if(adminKey) loadOrders();

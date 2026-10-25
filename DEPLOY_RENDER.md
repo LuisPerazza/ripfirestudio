@@ -110,18 +110,30 @@ O site não copia mais nada para o PC. Quem traz os pedidos pagos é o
 `sync_producao.py`:
 
 1. Copie `sync_producao.py` e `sincronizar_producao.bat` para uma pasta no PC
-   do RIP (ex.: `C:\Ripfire`). Precisa do Python instalado; nada mais.
+   (ex.: `C:\Ripfire`). Precisa do Python instalado; o programa instala
+   sozinho o Pillow e o pypdf na primeira vez.
 2. Dê dois cliques no `sincronizar_producao.bat`. Na primeira vez ele pergunta
    o endereço do site, o usuário e a senha do Admin e a pasta de produção.
-3. Deixe a janela aberta. A cada minuto ele confere o site; cada pedido pago
-   aparece como `241024-0001__Maria__DTF_ONLY`, com a arte, o `pedido.json`, o
-   LEIA-ME e o relatório da chapa. A pasta só aparece quando terminou de
-   baixar. Ele guarda a lista do que já baixou e não repete.
+   Pode ser uma pasta de rede: use o caminho `\\PC-IMPRESSORA\DTF\PEDIDOS`
+   (não a letra do drive mapeado).
+3. Deixe a janela aberta. A cada minuto ele confere o site e monta cada
+   pedido pago. Somente DTF fica assim:
+
+   ```
+   <pasta de produção>\Maria Souza\2026-10-24\
+       261024-0001_CHAPA_58,5x120cm.png        a chapa como a cliente montou
+       261024-0001_ARTE_01_logo_10x12cm_3un.png  cada arte no tamanho escolhido
+       261024-0001_DADOS_DO_PEDIDO.txt         cliente, artes e valor cobrado
+   ```
+
+   O cliente pode mandar PNG, PDF, TIFF, JPG ou WEBP. Se todas as artes do
+   pedido são do mesmo tipo, tudo sai nesse tipo (JPG e WEBP saem em PNG); se
+   misturou, tudo sai em PDF. Tudo a 300 dpi no tamanho real; PDF continua
+   em vetor. Pedidos de camiseta continuam numa pasta por pedido.
+4. Ao terminar de baixar, o pedido passa sozinho para **Em fila** no Admin.
 
 Para abrir junto com o Windows: `Win + R`, digite `shell:startup` e coloque
 lá um atalho do `sincronizar_producao.bat`.
-
-Depois de produzir, marque o pedido como **Pronto** no Admin, como sempre.
 
 ## 6. Conferir
 
