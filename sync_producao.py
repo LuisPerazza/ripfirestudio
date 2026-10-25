@@ -17,8 +17,11 @@ Formato: se todas as artes do pedido são do mesmo tipo (PNG, TIFF ou PDF),
 tudo sai nesse tipo. Se o cliente misturou tipos, tudo sai em PDF. Todo
 arquivo sai a 300 dpi, no tamanho real em cm; PDF continua em vetor.
 
-Os outros tipos de pedido (camiseta) continuam numa pasta por pedido, como
-antes. Depois de baixar, o pedido passa sozinho para "Em fila" no site.
+Camiseta (pronta ou DTF + camiseta) vai para a mesma pasta do cliente e do
+dia: a arte de cada lado por tamanho (o menor tamanho como o cliente montou,
+os maiores proporcionais à área de impressão de cada um), a chapa com todas
+as cópias, as fotos de posição, a ficha de produção em PDF e o txt.
+Depois de baixar, o pedido passa sozinho para "Em fila" no site.
 
 Uso (no PC da produção, com Python instalado):
     python sync_producao.py            fica rodando (feche a janela para parar)
@@ -400,6 +403,11 @@ def build_dtf_order(site: Site, order: dict, target_root: Path) -> Path:
     txt = f"{num}_DADOS_DO_PEDIDO.txt"
     (out / txt).write_text(order_text(order, data, sheet_name, arts, fmt), encoding="utf-8-sig")
 
+    return deliver(order, out, work, target_root)
+
+
+def deliver(order: dict, out: Path, work: Path, target_root: Path) -> Path:
+    """Move os arquivos prontos para <cliente>\\<data>\\."""
     day = time.strftime("%Y-%m-%d", time.localtime(float(order["created_at"])))
     final = target_root / safe(order.get("customer_name") or "Cliente") / day
     final.mkdir(parents=True, exist_ok=True)
@@ -408,6 +416,399 @@ def build_dtf_order(site: Site, order: dict, target_root: Path) -> Path:
         p.replace(final / p.name)
     shutil.rmtree(work, ignore_errors=True)
     return final
+
+
+# ---------------- Camisetas (pronta e DTF + camiseta) ----------------
+
+SHIRT_SIDES = [  # arquivo que vem do site, nome na produção, cresce com o tamanho?
+    ("ARTE_PRODUCAO_FRENTE", "FRENTE", True),
+    ("ARTE_PRODUCAO_COSTAS", "COSTAS", True),
+    ("ARTE_PRODUCAO_MANGA_DIREITA", "MANGA_DIREITA", False),
+    ("ARTE_PRODUCAO_MANGA_ESQUERDA", "MANGA_ESQUERDA", False),
+]
+SIDE_LABEL = {"FRENTE": "Frente", "COSTAS": "Costas", "MANGA_DIREITA": "Manga direita",
+              "MANGA_ESQUERDA": "Manga esquerda"}
+SALE_LABEL = {"FINISHED_SHIRT": "CAMISETA PRONTA", "DTF_PLUS_SHIRT": "DTF + CAMISETA"}
+GAP_CM = 0.6            # espaço entre as peças e nas bordas, igual à chapa do Somente DTF
+MAX_SHEET_CM = 250.0    # chapa mais comprida que isso é dividida em várias
+_site_config: dict = {}
+
+
+def site_config(site: Site) -> dict:
+    if not _site_config:
+        _site_config.update(site.get_json("/api/config"))
+    return _site_config
+
+
+def image_cm(img) -> tuple[float, float]:
+    dpi = img.info.get("dpi")
+    d = float(dpi[0]) if dpi and dpi[0] and float(dpi[0]) > 1 else DPI
+    return img.size[0] / d * 2.54, img.size[1] / d * 2.54
+
+
+def ordered_sizes(cfg: dict, product: dict) -> list[tuple[str, int]]:
+    model = next((m for m in cfg.get("shirt_models") or [] if m.get("id") == product.get("shirt_model_id")), {})
+    order = list(model.get("sizes") or cfg.get("sizes") or [])
+    sizes = [(str(k), int(v or 0)) for k, v in (product.get("sizes") or {}).items() if int(v or 0) > 0]
+    return sorted(sizes, key=lambda kv: order.index(kv[0]) if kv[0] in order else len(order))
+
+
+def size_factor(limits: dict, ref: str, size: str, art_w: float, art_h: float) -> float:
+    """O menor tamanho do pedido sai como o cliente montou; os maiores crescem
+    na proporção da área máxima de impressão de cada tamanho, sem passar dela."""
+    lr, ls = limits.get(ref), limits.get(size)
+    if not lr or not ls or size == ref:
+        return 1.0
+    f = min(float(ls["w"]) / float(lr["w"]), float(ls["h"]) / float(lr["h"]))
+    f = min(f, float(ls["w"]) / art_w, float(ls["h"]) / art_h)
+    return max(1.0, f)
+
+
+def load_font(size: int, bold: bool = False):
+    from PIL import ImageFont
+    for name in (("arialbd.ttf", "DejaVuSans-Bold.ttf") if bold else ("arial.ttf", "DejaVuSans.ttf")):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            pass
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def pack_pieces(pieces: list[dict], sheet_w: float) -> list[dict]:
+    """Prateleiras, como o "Automático" da chapa do site. Devolve as chapas:
+    {"height": cm, "items": [(peça, x, y, w, h, girada)]}."""
+    usable = sheet_w - 2 * GAP_CM
+    sheets: list[dict] = []
+    items: list = []
+    x = y = GAP_CM
+    shelf = 0.0
+    for p in pieces:
+        w, h, rot = p["w"], p["h"], False
+        if w > usable and h <= usable:
+            w, h, rot = h, w, True
+        if x + w > sheet_w - GAP_CM + 1e-6:
+            y, x, shelf = y + shelf + GAP_CM, GAP_CM, 0.0
+        if items and y + h + GAP_CM > MAX_SHEET_CM:
+            sheets.append({"items": items})
+            items, x, y, shelf = [], GAP_CM, GAP_CM, 0.0
+        items.append((p, x, y, w, h, rot))
+        x += w + GAP_CM
+        shelf = max(shelf, h)
+    if items:
+        sheets.append({"items": items})
+    for sh in sheets:
+        sh["height"] = round(max(it[2] + it[4] for it in sh["items"]) + GAP_CM, 1)
+    return sheets
+
+
+def render_sheet(sheet: dict, sheet_w: float, dest: Path, map_dest: Path):
+    """A chapa para imprimir (300 dpi, transparente) e um mapa em JPG com o
+    tamanho e o lado de cada peça, para a ficha de produção."""
+    from PIL import Image, ImageDraw
+    big = Image.new("RGBA", (px(sheet_w), px(sheet["height"])), (0, 0, 0, 0))
+    scale = 900 / sheet_w  # px por cm no mapa
+    mw, mh = 900, max(1, round(sheet["height"] * scale))
+    mapa = Image.new("RGB", (mw, mh), (236, 236, 232))
+    draw = ImageDraw.Draw(mapa)
+    font = load_font(max(12, min(22, round(2.2 * scale))), bold=True)
+    for p, x, y, w, h, rot in sheet["items"]:
+        img = p["img"].rotate(90, expand=True) if rot else p["img"]
+        if img.size != (px(w), px(h)):
+            img = img.resize((px(w), px(h)))
+        big.alpha_composite(img, (px(x), px(y)))
+        thumb = img.resize((max(1, round(w * scale)), max(1, round(h * scale))))
+        mapa.paste(thumb, (round(x * scale), round(y * scale)), thumb)
+        box = [round(x * scale), round(y * scale), round((x + w) * scale), round((y + h) * scale)]
+        draw.rectangle(box, outline=(124, 58, 160), width=2)
+        label = f"{p['size']} · {SIDE_LABEL[p['side']]}" if p["size"] else SIDE_LABEL[p["side"]]
+        tb = draw.textbbox((0, 0), label, font=font)
+        tx, ty = box[0] + 4, box[1] + 4
+        draw.rectangle([tx - 3, ty - 2, tx + tb[2] - tb[0] + 3, ty + tb[3] - tb[1] + 4], fill=(30, 30, 34))
+        draw.text((tx - tb[0], ty - tb[1]), label, fill=(255, 255, 255), font=font)
+    big.save(dest, "PNG", dpi=(DPI, DPI), compress_level=6)
+    mapa.save(map_dest, "JPEG", quality=85)
+
+
+class MiniPDF:
+    """PDF simples (texto, retângulos e fotos JPG) para a ficha de produção."""
+    W, H = 595.28, 841.89  # A4
+
+    def __init__(self):
+        self.pages: list[tuple[list[str], list[int]]] = []
+        self.images: list[tuple[int, int, bytes]] = []
+
+    def new_page(self):
+        self.pages.append(([], []))
+
+    def _ops(self):
+        return self.pages[-1][0]
+
+    @staticmethod
+    def _esc(text: str) -> str:
+        raw = str(text).encode("cp1252", "replace").decode("latin-1")
+        return raw.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    def text(self, x, y, text, size=10, bold=False, color=(0, 0, 0)):
+        r, g, b = (c / 255 for c in color)
+        self._ops().append(f"BT {r:.3f} {g:.3f} {b:.3f} rg /{'F2' if bold else 'F1'} {size} Tf "
+                           f"{x:.2f} {self.H - y:.2f} Td ({self._esc(text)}) Tj ET")
+
+    def rect(self, x, y, w, h, fill=None, stroke=None):
+        ops = self._ops()
+        ops.append("q")
+        if fill:
+            ops.append("{:.3f} {:.3f} {:.3f} rg".format(*(c / 255 for c in fill)))
+        if stroke:
+            ops.append("{:.3f} {:.3f} {:.3f} RG 0.7 w".format(*(c / 255 for c in stroke)))
+        ops.append(f"{x:.2f} {self.H - y - h:.2f} {w:.2f} {h:.2f} re {'B' if fill and stroke else 'f' if fill else 'S'}")
+        ops.append("Q")
+
+    def image(self, path: Path, x, y, max_w, max_h) -> float:
+        """Foto que cabe em max_w x max_h. Devolve a altura usada."""
+        from PIL import Image
+        im = Image.open(path).convert("RGB")
+        im.thumbnail((1400, 1400))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        s = min(max_w / im.width, max_h / im.height)
+        w, h = im.width * s, im.height * s
+        self.images.append((im.width, im.height, buf.getvalue()))
+        idx = len(self.images) - 1
+        self.pages[-1][1].append(idx)
+        self._ops().append(f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {self.H - y - h:.2f} cm /Im{idx} Do Q")
+        return h
+
+    def save(self, dest: Path):
+        objs: list[bytes] = [b"", b""]  # 1 catálogo, 2 páginas (preenchidos no fim)
+        objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+        objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+        img_obj = {}
+        for i, (w, h, data) in enumerate(self.images):
+            objs.append(f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB "
+                        f"/BitsPerComponent 8 /Filter /DCTDecode /Length {len(data)} >>\nstream\n".encode()
+                        + data + b"\nendstream")
+            img_obj[i] = len(objs)
+        kids = []
+        for ops, imgs in self.pages:
+            content = "\n".join(ops).encode("latin-1")
+            objs.append(b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream")
+            content_no = len(objs)
+            xo = " ".join(f"/Im{i} {img_obj[i]} 0 R" for i in imgs)
+            objs.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {self.W} {self.H}] "
+                        f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << {xo} >> >> "
+                        f"/Contents {content_no} 0 R >>".encode())
+            kids.append(len(objs))
+        objs[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+        objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>".encode()
+        with dest.open("wb") as f:
+            f.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+            offsets = []
+            for i, body in enumerate(objs, start=1):
+                offsets.append(f.tell())
+                f.write(f"{i} 0 obj\n".encode() + body + b"\nendobj\n")
+            xref = f.tell()
+            f.write(f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode())
+            for off in offsets:
+                f.write(f"{off:010d} 00000 n \n".encode())
+            f.write(f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+
+
+def shirt_sheet_note(sizes: list[tuple[str, int]]) -> str:
+    return (f"O tamanho {sizes[0][0]} sai como o cliente montou; os maiores crescem na proporção "
+            "da área de impressão de cada tamanho.") if len(sizes) > 1 else "Arte no tamanho que o cliente montou."
+
+
+def shirt_text(order, data, product, sizes, art_rows, sheet_rows, sleeve_rows) -> str:
+    c = data.get("customer") or {}
+    when = time.strftime("%d/%m/%Y %H:%M", time.localtime(float(order["created_at"])))
+    total = sum(q for _, q in sizes)
+    lines = [
+        f"PEDIDO {order['order_number']} - {SALE_LABEL.get(order['sale_type'], order['sale_type'])}",
+        f"Data do pedido: {when}",
+        "Pagamento: aprovado" + (f" (Mercado Pago {order['payment_ref']})" if order.get("payment_ref") else ""),
+        "",
+        "CLIENTE",
+        f"Nome: {order.get('customer_name') or c.get('name') or ''}",
+        f"E-mail: {order.get('customer_email') or c.get('email') or ''}",
+        f"WhatsApp: {order.get('customer_whatsapp') or c.get('whatsapp') or ''}",
+    ]
+    if c.get("document"):
+        lines.append(f"CPF/CNPJ: {c['document']}")
+    if c.get("cep"):
+        lines.append(f"CEP: {c['cep']}" + (f"  Número: {c['address_number']}" if c.get("address_number") else ""))
+    lines += [
+        "",
+        "CAMISETA",
+        f"Modelo: {product.get('shirt_model') or product.get('shirt_model_id') or ''}",
+        f"Cor: {product.get('color') or ''}",
+        "Tamanhos: " + " · ".join(f"{s} {q}" for s, q in sizes) + f"  (total {total} peças)",
+        "",
+        "ARTES POR TAMANHO",
+    ]
+    for side, rows in art_rows.items():
+        for size, w, h, q, fname in rows:
+            lines.append(f"{SIDE_LABEL[side]} {size}: {cm(w)} x {cm(h)} cm - {q} un. - {fname}")
+    for side, w, h, q, fname in sleeve_rows:
+        lines.append(f"{SIDE_LABEL[side]} (todos os tamanhos): {cm(w)} x {cm(h)} cm - {q} un. - {fname}")
+    lines.append(shirt_sheet_note(sizes))
+    lines += ["", "CHAPA DE IMPRESSÃO"]
+    for i, (fname, h) in enumerate(sheet_rows, start=1):
+        lines.append(f"{i} de {len(sheet_rows)}: {cm(SHEET_W_DEFAULT)} x {cm(h)} cm - {fname}")
+    lines += ["", "VALOR COBRADO", f"Total: {money(order.get('total'))}"]
+    return "\r\n".join(lines) + "\r\n"
+
+
+SHEET_W_DEFAULT = 58.5
+
+
+def shirt_ficha(dest: Path, order, data, product, sizes, art_rows, sleeve_rows, placements, sheet_rows, maps):
+    pdf = MiniPDF()
+    pdf.new_page()
+    purple, dark, gray = (124, 58, 160), (30, 30, 34), (90, 90, 96)
+    pdf.rect(0, 0, pdf.W, 70, fill=dark)
+    pdf.text(36, 32, "FICHA DE PRODUÇÃO", 20, True, (255, 255, 255))
+    pdf.text(36, 54, SALE_LABEL.get(order["sale_type"], ""), 10, True, (200, 170, 230))
+    pdf.text(400, 40, f"Pedido {order['order_number']}", 14, True, (255, 255, 255))
+    c = data.get("customer") or {}
+    when = time.strftime("%d/%m/%Y %H:%M", time.localtime(float(order["created_at"])))
+    total = sum(q for _, q in sizes)
+    y = 100
+    for label, value in [("Cliente", order.get("customer_name") or c.get("name") or ""),
+                         ("WhatsApp", order.get("customer_whatsapp") or c.get("whatsapp") or ""),
+                         ("Data do pedido", when),
+                         ("Modelo", product.get("shirt_model") or ""),
+                         ("Cor", product.get("color") or ""),
+                         ("Total de peças", str(total))]:
+        pdf.text(36, y, f"{label}:", 10, True, gray)
+        pdf.text(130, y, value, 11, False, dark)
+        y += 17
+    # grade
+    y += 10
+    cols = [36, 136, 196, 366]
+    pdf.rect(36, y, 523, 22, fill=(226, 226, 222))
+    for x, head in zip(cols, ["Tamanho", "Qtd", "Frente (cm)", "Costas (cm)"]):
+        pdf.text(x + 8, y + 15, head, 10, True, dark)
+    y += 22
+    by_size = {s: {} for s, _ in sizes}
+    for side, rows in art_rows.items():
+        for size, w, h, q, _ in rows:
+            by_size[size][side] = f"{cm(w)} x {cm(h)}"
+    for s, q in sizes:
+        pdf.rect(36, y, 523, 22, stroke=(210, 210, 205))
+        pdf.text(cols[0] + 8, y + 15, s, 11, True, purple)
+        pdf.text(cols[1] + 8, y + 15, str(q), 11)
+        pdf.text(cols[2] + 8, y + 15, by_size[s].get("FRENTE", "-"), 11)
+        pdf.text(cols[3] + 8, y + 15, by_size[s].get("COSTAS", "-"), 11)
+        y += 22
+    for side, w, h, q, _ in sleeve_rows:
+        y += 16
+        pdf.text(36, y, f"{SIDE_LABEL[side]}: {cm(w)} x {cm(h)} cm em todas as {q} peças", 10, False, dark)
+    y += 18
+    pdf.text(36, y, shirt_sheet_note(sizes), 9, False, gray)
+    # posição
+    if placements:
+        y += 26
+        pdf.text(36, y, "POSIÇÃO NA CAMISETA (como o cliente deixou)", 11, True, dark)
+        y += 10
+        slot = (523 - 12 * (len(placements) - 1)) / len(placements)
+        used = 0.0
+        for i, (label, path) in enumerate(placements):
+            x = 36 + i * (slot + 12)
+            pdf.text(x, y + 14, label, 10, True, purple)
+            used = max(used, pdf.image(path, x, y + 22, slot, pdf.H - y - 70))
+        y += 22 + used
+    pdf.text(36, pdf.H - 30, "Chapa(s): " + ", ".join(f for f, _ in sheet_rows), 8, False, gray)
+    # mapa de cada chapa
+    for i, ((fname, h), mp) in enumerate(zip(sheet_rows, maps), start=1):
+        pdf.new_page()
+        pdf.text(36, 40, f"CHAPA {i} DE {len(sheet_rows)}  ·  {cm(SHEET_W_DEFAULT)} x {cm(h)} cm", 14, True, dark)
+        pdf.text(36, 58, fname, 9, False, gray)
+        pdf.image(mp, 36, 72, 523, pdf.H - 110)
+    pdf.save(dest)
+
+
+def build_shirt_order(site: Site, order: dict, target_root: Path) -> Path:
+    """Camiseta: artes por lado e tamanho, a chapa com todas as cópias, as
+    fotos de posição, o txt e a ficha de produção em PDF."""
+    global SHEET_W_DEFAULT
+    from PIL import Image
+    cfg = site_config(site)
+    SHEET_W_DEFAULT = float(cfg.get("dtf_sheet_width_cm") or 58.5)
+    limits = cfg.get("size_print_limits") or {}
+    data = order.get("data") or {}
+    product = data.get("product") or {}
+    sizes = ordered_sizes(cfg, product)
+    if not sizes:
+        raise ValueError("pedido sem tamanhos")
+    total = sum(q for _, q in sizes)
+    num = order["order_number"]
+    work = target_root / ".baixando" / order["id"]
+    raw, out = work / "baixado", work / "pronto"
+    fetch_files(site, order, raw)
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+
+    pieces: list[dict] = []
+    art_rows: dict[str, list] = {}
+    sleeve_rows: list = []
+    for src_name, side, grows in SHIRT_SIDES:
+        src = raw / f"{src_name}.png"
+        if not src.is_file():
+            continue
+        base = open_raster(src).convert("RGBA")
+        bw, bh = image_cm(open_raster(src))
+        if not grows:
+            name = f"{num}_{side}_{cm(bw)}x{cm(bh)}cm_{total}un.png"
+            base.save(out / name, "PNG", dpi=(DPI, DPI), compress_level=6)
+            sleeve_rows.append((side, bw, bh, total, name))
+            pieces += [{"img": base, "w": bw, "h": bh, "size": "", "side": side}] * total
+            continue
+        rows = art_rows.setdefault(side, [])
+        cache: dict[float, tuple] = {}
+        for size, qty in sizes:
+            f = round(size_factor(limits, sizes[0][0], size, bw, bh), 4)
+            if f not in cache:
+                w, h = bw * f, bh * f
+                img = base if f == 1.0 else base.resize((px(w), px(h)), Image.LANCZOS)
+                cache[f] = (img, w, h)
+            img, w, h = cache[f]
+            name = f"{num}_{side}_{size}_{cm(w)}x{cm(h)}cm_{qty}un.png"
+            log(f"  {SIDE_LABEL[side].lower()} {size} -> {name}")
+            img.save(out / name, "PNG", dpi=(DPI, DPI), compress_level=6)
+            rows.append((size, w, h, qty, name))
+            pieces += [{"img": img, "w": w, "h": h, "size": size, "side": side}] * qty
+    if not pieces:
+        raise ValueError("o pedido não tem arte de frente, costas ou manga")
+
+    # Chapa: tamanho por tamanho (P, depois M...), as maiores primeiro em cada um.
+    rank = {s: i for i, (s, _) in enumerate(sizes)}
+    pieces.sort(key=lambda p: (rank.get(p["size"], len(rank)), -p["h"]))
+    sheets = pack_pieces(pieces, SHEET_W_DEFAULT)
+    sheet_rows, maps = [], []
+    for i, sh in enumerate(sheets, start=1):
+        part = f"_{i}de{len(sheets)}" if len(sheets) > 1 else ""
+        name = f"{num}_CHAPA{part}_{cm(SHEET_W_DEFAULT)}x{cm(sh['height'])}cm.png"
+        log(f"  chapa -> {name} ({len(sh['items'])} peças)")
+        mp = work / f"mapa_{i}.jpg"
+        render_sheet(sh, SHEET_W_DEFAULT, out / name, mp)
+        sheet_rows.append((name, sh["height"]))
+        maps.append(mp)
+
+    placements = []
+    for side, label in (("FRENTE", "Frente"), ("COSTAS", "Costas")):
+        src = raw / f"POSICAO_{side}.jpg"
+        if src.is_file():
+            shutil.copy2(src, out / f"{num}_POSICAO_{side}.jpg")
+            placements.append((label, src))
+
+    shirt_ficha(out / f"{num}_FICHA_PRODUCAO.pdf", order, data, product, sizes, art_rows, sleeve_rows,
+                placements, sheet_rows, maps)
+    (out / f"{num}_DADOS_DO_PEDIDO.txt").write_text(
+        shirt_text(order, data, product, sizes, art_rows, sheet_rows, sleeve_rows), encoding="utf-8-sig")
+    return deliver(order, out, work, target_root)
 
 
 def mark_in_queue(site: Site, order: dict):
@@ -441,6 +842,8 @@ def run(once: bool):
                 try:
                     if o["sale_type"] == "DTF_ONLY":
                         where = build_dtf_order(site, o, target)
+                    elif o["sale_type"] in SALE_LABEL:
+                        where = build_shirt_order(site, o, target)
                     else:
                         where = fetch_order_folder(site, o, target)
                 except Exception as exc:  # um pedido com problema não para os outros

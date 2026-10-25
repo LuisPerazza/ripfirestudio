@@ -129,7 +129,23 @@ O site não copia mais nada para o PC. Quem traz os pedidos pagos é o
    O cliente pode mandar PNG, PDF, TIFF, JPG ou WEBP. Se todas as artes do
    pedido são do mesmo tipo, tudo sai nesse tipo (JPG e WEBP saem em PNG); se
    misturou, tudo sai em PDF. Tudo a 300 dpi no tamanho real; PDF continua
-   em vetor. Pedidos de camiseta continuam numa pasta por pedido.
+   em vetor.
+
+   Camiseta pronta fica na mesma pasta do cliente e do dia:
+
+   ```
+   261024-0002_FRENTE_P_24x30cm_2un.png    arte de cada lado, por tamanho
+   261024-0002_COSTAS_GG_29,5x36,9cm_1un.png
+   261024-0002_CHAPA_58,5x80cm.png         todas as cópias numa chapa só
+   261024-0002_POSICAO_FRENTE.jpg          a camiseta com a arte no lugar
+   261024-0002_FICHA_PRODUCAO.pdf          grade, medidas, fotos e mapa da chapa
+   261024-0002_DADOS_DO_PEDIDO.txt
+   ```
+
+   O menor tamanho do pedido sai como o cliente montou; os maiores crescem na
+   proporção da área de impressão de cada tamanho (`size_print_limits`), sem
+   passar dela. Manga sai igual em todos os tamanhos. Chapa com mais de 2,5 m
+   é dividida em várias (`_1de2`, `_2de2`).
 4. Ao terminar de baixar, o pedido passa sozinho para **Em fila** no Admin.
 
 Para abrir junto com o Windows: `Win + R`, digite `shell:startup` e coloque
