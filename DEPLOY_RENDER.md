@@ -112,8 +112,10 @@ O site não copia mais nada para o PC. Quem traz os pedidos pagos é o
 1. Copie `sync_producao.py` e `sincronizar_producao.bat` para uma pasta no PC
    (ex.: `C:\Ripfire`). Precisa do Python instalado; o programa instala
    sozinho o Pillow e o pypdf na primeira vez.
-2. Dê dois cliques no `sincronizar_producao.bat`. Na primeira vez ele pergunta
-   o endereço do site, o usuário e a senha do Admin e a pasta de produção.
+2. No Admin, aba **Segurança**, crie um usuário com papel **Produção** (ele só
+   vê os pedidos, baixa os arquivos e muda a etapa; não ligue o 2FA nele).
+   Dê dois cliques no `sincronizar_producao.bat`. Na primeira vez ele pergunta
+   o endereço do site, esse usuário e a senha, e a pasta de produção.
    Pode ser uma pasta de rede: use o caminho `\\PC-IMPRESSORA\DTF\PEDIDOS`
    (não a letra do drive mapeado).
 3. Deixe a janela aberta. A cada minuto ele confere o site e monta cada
@@ -168,3 +170,18 @@ lá um atalho do `sincronizar_producao.bat`.
   (*Database > Backups*, diário no plano Pro).
 - **Baixar arquivos do pedido** continua funcionando (o zip é montado a
   partir do Storage).
+
+## Segurança
+
+- **HTTPS**: o Render emite e renova o certificado; o site redireciona http
+  para https e manda HSTS (o navegador passa a usar só https).
+- **Headers**: CSP (só roda script do site e dos serviços que a loja usa),
+  anti-iframe, nosniff, Referrer-Policy e Permissions-Policy em toda resposta.
+- **Admin**: login com sessão de 12 h e verificação em duas etapas (aba
+  Segurança). Papéis: Admin (tudo) e Produção (pedidos e arquivos).
+- **Limites**: senha errada (cliente e Admin) bloqueia por 15 min depois de 5
+  tentativas; cada IP faz no máximo 900 chamadas à API em 5 min.
+- **CSRF**: o login é por token no header (sem cookie) e chamada que muda
+  dados vinda de outro site é recusada.
+- **Banco**: RLS ligado em todas as tabelas no Supabase (a API pública não
+  lê nada); cada cliente só vê os próprios pedidos.

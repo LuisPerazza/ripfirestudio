@@ -67,8 +67,9 @@ def load_config() -> dict:
         return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     print("Primeira vez: configure a sincronização.\n")
     site = input("Endereço do site (ex.: https://ripfirestudio.onrender.com): ").strip().rstrip("/")
-    user = input("Usuário do Admin: ").strip()
-    password = getpass.getpass("Senha do Admin (não aparece ao digitar): ")
+    print("Use um usuário da equipe com papel Produção (crie em Admin > Segurança).")
+    user = input("Usuário: ").strip()
+    password = getpass.getpass("Senha (não aparece ao digitar): ")
     print("Pasta de produção: pode ser deste PC (D:\\PEDIDOS_DTF_PAGOS) ou de rede")
     print("(\\\\PC-IMPRESSORA\\DTF\\PEDIDOS). Em pasta de rede, use o caminho com \\\\, não a letra do drive.")
     folder = input("Pasta de produção [D:\\PEDIDOS_DTF_PAGOS]: ").strip().strip('"') or "D:\\PEDIDOS_DTF_PAGOS"
@@ -103,23 +104,61 @@ def ensure_libs():
 
 
 class Site:
+    """Fala com o site como um usuário da equipe. Entra uma vez e usa o token
+    de sessão (12 h); quando ele vence, entra de novo sozinho.
+    Use um usuário com papel Produção e sem 2FA (criado em Admin > Segurança)."""
+
     def __init__(self, cfg: dict):
         self.base = cfg["site_url"].rstrip("/")
-        self.headers = {"X-Admin-User": cfg["admin_user"], "X-Admin-Key": cfg["admin_senha"]}
+        self.user, self.password = cfg["admin_user"], cfg["admin_senha"]
+        self.token = ""
+
+    def login(self):
+        req = urllib.request.Request(self.base + "/api/admin/login", method="POST",
+                                     data=json.dumps({"user": self.user, "password": self.password}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                d = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # site antigo, sem login por sessão
+                self.token = ""
+                return
+            raise
+        if d.get("need_code"):
+            sys.exit("Esse usuário usa verificação em duas etapas (2FA). Crie no Admin > Segurança um usuário "
+                     f"com papel Produção, sem 2FA, e coloque em {CONFIG_FILE.name}.")
+        self.token = d["token"]
+
+    def _headers(self) -> dict:
+        if self.token:
+            return {"X-Admin-Token": self.token}
+        return {"X-Admin-User": self.user, "X-Admin-Key": self.password}
+
+    def _open(self, make, timeout: float):
+        if not self.token:
+            self.login()
+        for attempt in (1, 2):
+            try:
+                with urllib.request.urlopen(make(), timeout=timeout) as r:
+                    return r.read()
+            except urllib.error.HTTPError as e:
+                if e.code == 401 and attempt == 1 and self.token:
+                    self.login()  # sessão venceu
+                    continue
+                raise
 
     def get(self, path: str, timeout: float = 60) -> bytes:
-        req = urllib.request.Request(self.base + path, headers=self.headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read()
+        return self._open(lambda: urllib.request.Request(self.base + path, headers=self._headers()), timeout)
 
     def get_json(self, path: str):
         return json.loads(self.get(path))
 
     def patch_json(self, path: str, body: dict):
-        req = urllib.request.Request(self.base + path, method="PATCH", data=json.dumps(body).encode(),
-                                     headers={**self.headers, "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read() or b"{}")
+        data = json.dumps(body).encode()
+        raw = self._open(lambda: urllib.request.Request(self.base + path, method="PATCH", data=data,
+                                                        headers={**self._headers(), "Content-Type": "application/json"}), 60)
+        return json.loads(raw or b"{}")
 
 
 def download(url: str, dest: Path):

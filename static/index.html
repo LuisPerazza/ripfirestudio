@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=49">
+  <link rel="stylesheet" href="/static/styles.css?v=51">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -302,7 +302,8 @@
     <div class="adm">
       <header class="adm-head">
         <div><h1>Painel Ripfire</h1><p id="admWho">Visão geral da loja</p></div>
-        <button type="button" id="refreshOrders" class="adm-refresh">↻ Atualizar</button>
+        <div class="adm-head-actions"><button type="button" id="refreshOrders" class="adm-refresh">↻ Atualizar</button>
+          <button type="button" id="adminLogout" class="adm-refresh">Sair</button></div>
       </header>
       <nav class="adm-tabs" role="tablist" aria-label="Seções do Admin">
         <button type="button" role="tab" class="on" data-adm="dash">Painel</button>
@@ -312,6 +313,7 @@
         <button type="button" role="tab" data-adm="arts">Artes</button>
         <button type="button" role="tab" data-adm="mockups">Mockups</button>
         <button type="button" role="tab" data-adm="more">LGPD e backup</button>
+        <button type="button" role="tab" data-adm="security">Segurança</button>
       </nav>
 
       <!-- Painel -->
@@ -436,6 +438,26 @@
       </section>
 
       <!-- LGPD e backup -->
+      <section class="adm-pane" data-pane="security" hidden>
+        <div class="adm-card">
+          <div class="adm-card-head"><h3>Verificação em duas etapas (2FA)</h3><span id="tfaBadge" class="adm-pill"></span></div>
+          <p class="adm-note">Além da senha, o Admin pede um código de 6 dígitos que muda a cada 30 segundos, gerado pelo app autenticador do celular (Google Authenticator, Microsoft Authenticator, Authy...). Quem descobrir a senha não entra sem o celular.</p>
+          <div id="tfaBody"></div>
+        </div>
+        <div class="adm-card" id="staffCard">
+          <div class="adm-card-head"><h3>Equipe e permissões</h3></div>
+          <p class="adm-note"><b>Admin</b> vê e muda tudo. <b>Produção</b> só vê os pedidos, baixa os arquivos e muda a etapa: é o login do PC da impressão (programa de sincronizar).</p>
+          <div id="staffTable" class="adm-table-wrap"></div>
+          <form id="staffForm" class="adm-staff-form">
+            <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: producao" autocomplete="off"></label>
+            <label><span class="adm-label">Senha (mín. 12)</span><input id="staffPass" type="password" minlength="12" required autocomplete="new-password"></label>
+            <label><span class="adm-label">Papel</span><select id="staffRole"><option value="producao">Produção</option><option value="admin">Admin</option></select></label>
+            <button class="primary">Adicionar</button>
+          </form>
+          <div id="staffStatus" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+
       <section class="adm-pane" data-pane="more" hidden>
         <div class="adm-card"><div class="adm-card-head"><h3>Solicitações LGPD</h3><button id="refreshLgpd" class="adm-btn">Atualizar</button></div>
           <p class="adm-note">Pedidos feitos pelo formulário /lgpd. Prazo de resposta: 15 dias.</p>
@@ -543,11 +565,15 @@
     <h2>Entrar no Admin</h2>
     <label class="sr-only" for="adminUser">Usuário</label><input id="adminUser" placeholder="Usuário" autocomplete="username">
     <label class="sr-only" for="adminPassword">Senha</label><input id="adminPassword" placeholder="Senha" type="password" autocomplete="current-password">
+    <div id="adminCodeWrap" class="adm-code" hidden>
+      <label for="adminCode">Código do app autenticador</label>
+      <input id="adminCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000">
+    </div>
     <button type="button" id="adminLoginBtn" class="primary full">Entrar</button>
     <div id="adminLoginStatus" role="status" aria-live="polite"></div>
   </form>
 </dialog>
 
-<script src="/static/app.js?v=57"></script>
+<script src="/static/app.js?v=58"></script>
 </body>
 </html>

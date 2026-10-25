@@ -26,7 +26,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
@@ -321,6 +321,12 @@ def init_db():
             con.execute("ALTER TABLE orders ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
             con.execute("ALTER TABLE orders ADD COLUMN stage_at REAL NOT NULL DEFAULT 0")
         con.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        con.execute("""CREATE TABLE IF NOT EXISTS staff_users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL,
+                       role TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL DEFAULT '')""")
+        con.execute("""CREATE TABLE IF NOT EXISTS staff_totp (username TEXT PRIMARY KEY, secret TEXT NOT NULL,
+                       enabled INTEGER NOT NULL DEFAULT 0, last_counter INTEGER NOT NULL DEFAULT 0)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS staff_sessions (token_hash TEXT PRIMARY KEY, username TEXT NOT NULL,
+                       created_at REAL NOT NULL)""")
 
         mockup_cols = {r["name"] for r in con.execute("PRAGMA table_info(shirt_mockups)").fetchall()}
         if "side" not in mockup_cols:
@@ -546,47 +552,138 @@ class PasswordChange(BaseModel):
     new_password: str
 
 
-def require_admin(
-    request: Request,
-    x_admin_key: str | None = Header(None),
-    x_admin_user: str | None = Header(None),
-):
-    """Protege rotas de admin/pagamento. Sem isso, qualquer visitante do
-    site (uma vez publicado num domínio) conseguiria ver todos os
-    pedidos com dados de clientes, cadastrar/apagar artes do catálogo,
-    ou pior: liberar qualquer pedido como pago sem pagar de verdade.
+# ---------- Equipe do Admin: sessão, 2FA e papéis ----------
+# Papéis: "admin" faz tudo; "producao" só vê os pedidos, baixa os arquivos e
+# muda a etapa (é o login do PC da impressão). Os usuários do config.json
+# (admin_user e "admins") são admin, salvo "role" no item; os criados pelo
+# Admin ficam na tabela staff_users.
+# Entrar: POST /api/admin/login com usuário, senha e, se a pessoa ligou o 2FA,
+# o código de 6 dígitos do app autenticador. Volta um token de sessão (12 h);
+# a senha não trafega mais em toda chamada.
+ROLES = {"admin": "Admin", "producao": "Produção"}
+STAFF_SESSION_SECONDS = 12 * 3600
 
-    Usuário e senha são validados só aqui, no servidor — nenhum dos dois
-    é enviado pro navegador em nenhuma rota pública (antes o usuário
-    ficava hardcoded no app.js e a senha vazava inteira em /api/config,
-    então qualquer visitante conseguia ler as credenciais do Admin).
 
-    Vale o login principal (admin_user/admin_key) e qualquer um da lista
-    "admins" do config.json, todos com o mesmo acesso."""
-    logins = [(CONFIG.get("admin_user"), CONFIG.get("admin_key"))]
-    logins += [(a.get("user"), a.get("key")) for a in CONFIG.get("admins") or []]
-    # Senha vazia ou ainda com o texto de exemplo (TROQUE-...) não vale.
-    logins = [(str(u), str(k)) for u, k in logins if u and k and not str(k).startswith("TROQUE-")]
-    if not logins:
-        raise HTTPException(
-            500,
-            "admin_key ainda não foi trocada em config.json. Configure antes de usar o Admin."
-        )
-    user, key = x_admin_user or "", x_admin_key or ""
-    if not user and not key:
-        # Sem usuário nem senha não é tentativa de login (robô varrendo /api/admin,
-        # página aberta sem entrar): recusa sem contar, senão bloquearia o IP
-        # de quem divide a rede com o Admin.
-        raise HTTPException(401, "Entre no Admin.")
-    # Só as senhas erradas contam: o Admin logado faz várias chamadas por minuto.
+def config_staff() -> dict[str, dict[str, str]]:
+    out: dict[str, dict[str, str]] = {}
+    items = [{"user": CONFIG.get("admin_user"), "key": CONFIG.get("admin_key"), "role": "admin"}]
+    items += list(CONFIG.get("admins") or [])
+    for a in items:
+        user, key = str(a.get("user") or ""), str(a.get("key") or "")
+        if user and key and not key.startswith("TROQUE-"):
+            role = a.get("role") if a.get("role") in ROLES else "admin"
+            out.setdefault(user, {"user": user, "key": key, "role": role, "source": "config"})
+    return out
+
+
+def staff_account(user: str) -> dict[str, str] | None:
+    cfg = config_staff()
+    if user in cfg:
+        return cfg[user]
+    with db() as con:
+        row = con.execute("SELECT username, password_hash, role FROM staff_users WHERE username=?", (user,)).fetchone()
+    return {"user": row["username"], "key": row["password_hash"], "role": row["role"], "source": "equipe"} if row else None
+
+
+def staff_totp_row(user: str) -> dict[str, Any] | None:
+    with db() as con:
+        row = con.execute("SELECT * FROM staff_totp WHERE username=?", (user,)).fetchone()
+    return dict(row) if row else None
+
+
+def totp_code(secret: str, counter: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    digest = hmac.new(key, struct.pack(">Q", counter), "sha1").digest()
+    off = digest[-1] & 15
+    return f"{(int.from_bytes(digest[off:off + 4], 'big') & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
+def totp_match(secret: str, code: str, last_counter: int = 0) -> int | None:
+    """Confere o código (aceita 30 s de diferença no relógio). Devolve o
+    contador usado; código já usado (last_counter) não vale de novo."""
+    code = re.sub(r"\D", "", code or "")
+    if len(code) != 6:
+        return None
+    now = int(time.time() // 30)
+    for counter in (now - 1, now, now + 1):
+        if counter > last_counter and secrets.compare_digest(totp_code(secret, counter), code):
+            return counter
+    return None
+
+
+def staff_has_2fa(user: str) -> bool:
+    row = staff_totp_row(user)
+    return bool(row and row["enabled"])
+
+
+def check_staff_password(request: Request, user: str, password: str) -> dict[str, str]:
+    """Senha da equipe, com o limite de tentativas por IP e por usuário."""
     fail_keys = [f"admin-ip:{client_ip(request)}", f"admin-user:{user.lower()[:100]}"]
     login_guard(fail_keys)
-    # Confere o usuário em todos, sem parar no primeiro: o tempo de resposta
-    # não entrega qual usuário existe. A senha só é conferida no que bateu.
-    matches = [k for u, k in logins if secrets.compare_digest(user.encode(), u.encode())]
-    ok = admin_key_matches(key, matches[0] if matches else _DUMMY_HASH)
-    if not ok:
+    account = staff_account(user) if user else None
+    # Sem usuário certo, confere um hash qualquer: o tempo de resposta não entrega quem existe.
+    ok = admin_key_matches(password, account["key"] if account else _DUMMY_HASH)
+    if not account or not ok:
         login_failed(fail_keys, "Usuário ou senha de admin inválidos.")
+    return account
+
+
+def new_staff_session(user: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with db() as con:
+        con.execute("DELETE FROM staff_sessions WHERE created_at < ?", (now - STAFF_SESSION_SECONDS,))
+        con.execute("INSERT INTO staff_sessions (token_hash, username, created_at) VALUES(?,?,?)",
+                    (hashlib.sha256(token.encode()).hexdigest(), user, now))
+    return token
+
+
+def staff_from_request(request: Request, token: str | None, user: str | None, key: str | None) -> dict[str, Any]:
+    if token:
+        with db() as con:
+            row = con.execute("SELECT username, created_at FROM staff_sessions WHERE token_hash=?",
+                              (hashlib.sha256(token.encode()).hexdigest(),)).fetchone()
+        account = staff_account(row["username"]) if row and time.time() - row["created_at"] < STAFF_SESSION_SECONDS else None
+        if not account:
+            raise HTTPException(401, "Sua sessão do Admin expirou. Entre de novo.")
+        return {"user": account["user"], "role": account["role"], "token": token}
+    if not config_staff():
+        raise HTTPException(500, "admin_key ainda não foi trocada em config.json. Configure antes de usar o Admin.")
+    user, key = user or "", key or ""
+    if not user and not key:
+        # Sem nada não é tentativa de login (robô varrendo /api/admin): recusa sem contar.
+        raise HTTPException(401, "Entre no Admin.")
+    # Usuário e senha no header (programas antigos): só pra quem não ligou o 2FA,
+    # senão o 2FA seria contornado.
+    account = check_staff_password(request, user, key)
+    if staff_has_2fa(account["user"]):
+        raise HTTPException(401, "Esse usuário usa verificação em duas etapas: entre pelo login do Admin.")
+    return {"user": account["user"], "role": account["role"], "token": None}
+
+
+def require_staff(
+    request: Request,
+    x_admin_token: str | None = Header(None),
+    x_admin_key: str | None = Header(None),
+    x_admin_user: str | None = Header(None),
+) -> dict[str, Any]:
+    """Qualquer pessoa da equipe (admin ou produção)."""
+    return staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
+
+
+def require_admin(
+    request: Request,
+    x_admin_token: str | None = Header(None),
+    x_admin_key: str | None = Header(None),
+    x_admin_user: str | None = Header(None),
+) -> dict[str, Any]:
+    """Protege as rotas do Admin. Sem isso, qualquer visitante veria os
+    pedidos com dados de clientes ou liberaria pedido como pago sem pagar.
+    Só o papel "admin"; a produção usa require_staff."""
+    staff = staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
+    if staff["role"] != "admin":
+        raise HTTPException(403, "Seu usuário não tem acesso a essa parte do Admin.")
+    return staff
 
 
 # Senhas de admin que já bateram com o hash nesta execução. O Admin manda a
@@ -614,9 +711,18 @@ def admin_key_matches(given: str, stored: str) -> bool:
 _RATE_LIMITS: dict[str, list[float]] = {}
 
 
+# Cabeçalho com o IP real do visitante, posto pelo proxy da hospedagem (que
+# apaga o que o visitante mandar). Sem ele, vale o IP da conexão. O
+# X-Forwarded-For sozinho não serve: o primeiro IP da lista é o visitante quem
+# escreve, e trocá-lo a cada tentativa furaria o limite de senha por IP.
+CLIENT_IP_HEADER = os.getenv("CLIENT_IP_HEADER", "").strip().lower()
+
+
 def client_ip(request: Request) -> str:
-    # Atrás do nginx o uvicorn já troca pelo IP real (X-Forwarded-For), desde
-    # que o nginx esteja na mesma máquina (forwarded_allow_ips=127.0.0.1).
+    if CLIENT_IP_HEADER:
+        value = (request.headers.get(CLIENT_IP_HEADER) or "").split(",")[-1].strip()
+        if value:
+            return value[:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -1305,6 +1411,86 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 MEDIA_ROOT = (BASE / "media").resolve()
 
 
+# ---------- Proteções em toda resposta ----------
+# CSP: o navegador só roda script do próprio site e dos poucos serviços que a
+# loja usa (leitores de PDF/TIFF, login do Google, GA/GTM e Pixel, quando o
+# visitante aceita). Script injetado por um ataque (XSS) não roda.
+def _supabase_origin() -> str:
+    url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    return url if url.startswith("https://") else ""
+
+
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://accounts.google.com/gsi/client "
+    "https://www.googletagmanager.com https://connect.facebook.net",
+    # style inline: o site usa style="..." no HTML gerado (não executa código).
+    "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
+    f"img-src 'self' data: blob: https://*.supabase.co {_supabase_origin()} https://*.google-analytics.com "
+    "https://*.googletagmanager.com https://www.facebook.com https://*.googleusercontent.com",
+    "font-src 'self' data:",
+    f"connect-src 'self' https://*.supabase.co {_supabase_origin()} https://accounts.google.com/gsi/ "
+    "https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com "
+    "https://www.facebook.com https://connect.facebook.net https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+    "frame-src https://accounts.google.com/gsi/ https://www.googletagmanager.com",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",  # o site não abre dentro de iframe de outro site (clickjacking)
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+    # same-origin-allow-popups: o login do Google abre um popup.
+    "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+}
+# Recebem POST de fora (Mercado Pago), autenticados pelo segredo/consulta ao MP.
+CSRF_EXEMPT = ("/api/payments/",)
+API_LIMIT, API_WINDOW = 900, 300  # por IP: 900 chamadas em 5 minutos (3/s em média)
+
+
+def _same_origin(request: Request) -> bool:
+    origin = request.headers.get("origin") or ""
+    if not origin:
+        return True
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").lower()
+    return urllib.parse.urlsplit(origin).netloc.lower() == host
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    path = request.url.path
+    # HTTPS: o Render já redireciona, isto é a garantia caso chegue algo em http.
+    if proto == "http" and request.headers.get("x-forwarded-proto"):
+        return Response(status_code=308, headers={"Location": str(request.url.replace(scheme="https"))})
+    if path.startswith("/api/"):
+        # CSRF: o login é por token no header (nada de cookie), então outro site
+        # não consegue agir em nome do cliente. Mesmo assim, chamada que muda
+        # dados vinda de página de outro site (Origin diferente) é recusada.
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not path.startswith(CSRF_EXEMPT) \
+                and request.headers.get("origin") and not _same_origin(request):
+            return JSONResponse({"detail": "Origem não permitida."}, status_code=403)
+        try:
+            check_rate_limit(f"api:{client_ip(request)}", API_LIMIT, API_WINDOW,
+                             "Muitas requisições em pouco tempo. Aguarde alguns minutos.")
+        except HTTPException as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=429, headers={"Retry-After": "60"})
+    response = await call_next(request)
+    for k, v in SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    if proto == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if path.startswith("/api/"):
+        # Dados de cliente e do Admin não ficam guardados em cache do navegador/proxy.
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
 @app.get("/media/{file_path:path}")
 def media_file(file_path: str):
     """Catálogo, mockups e artes da IA. Antes era uma pasta estática; agora,
@@ -1455,11 +1641,17 @@ def logout_customer(x_customer_token: str | None = Header(None)) -> dict[str, An
     return {"ok": True}
 
 
+def legacy_email(customer: dict[str, Any]) -> str:
+    """Pedido de antes do customer_id existir é achado pelo e-mail, mas só pra
+    conta com e-mail confirmado (entrou com o Google). Sem isso, alguém que
+    criasse conta com o e-mail de outra pessoa veria os pedidos antigos dela."""
+    return customer["email"].lower() if customer.get("google_sub") else " sem e-mail confirmado "
+
+
 def order_is_customers(row: dict[str, Any], customer: dict[str, Any]) -> bool:
     if row.get("customer_id"):
         return row["customer_id"] == customer["id"]
-    # Pedido de antes do customer_id existir: vale o e-mail da conta.
-    return (row.get("customer_email") or "").strip().lower() == customer["email"].lower()
+    return (row.get("customer_email") or "").strip().lower() == legacy_email(customer)
 
 
 def order_for_customer(row: dict[str, Any]) -> dict[str, Any]:
@@ -1521,7 +1713,7 @@ def get_profile(customer: dict[str, Any] = Depends(require_customer)) -> dict[st
             """SELECT * FROM orders
                WHERE customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)
                ORDER BY created_at DESC""",
-            (customer["id"], customer["email"].lower())
+            (customer["id"], legacy_email(customer))
         ).fetchall()
         downloads = con.execute(
             """SELECT d.art_id, MAX(d.art_name) AS art_name, MAX(d.created_at) AS last_at, COUNT(*) AS times,
@@ -1695,7 +1887,7 @@ def customer_orders(con: sqlite3.Connection, customer: dict[str, Any]) -> list[s
     return con.execute(
         """SELECT * FROM orders WHERE customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)
            ORDER BY created_at DESC""",
-        (customer["id"], customer["email"].lower())
+        (customer["id"], legacy_email(customer))
     ).fetchall()
 
 
@@ -1711,7 +1903,7 @@ def export_my_data(customer: dict[str, Any] = Depends(require_customer)):
         ).fetchall()
         requests_ = con.execute(
             "SELECT protocol, created_at, kind, message, status FROM privacy_requests WHERE customer_id=? OR email=?",
-            (customer["id"], customer["email"].lower())
+            (customer["id"], legacy_email(customer))
         ).fetchall()
         sessions = con.execute(
             "SELECT COUNT(*) FROM customer_sessions WHERE customer_id=?", (customer["id"],)
@@ -2699,7 +2891,7 @@ async def create_order(
         raise
 
 
-@app.get("/api/orders", dependencies=[Depends(require_admin)])
+@app.get("/api/orders", dependencies=[Depends(require_staff)])
 def list_orders() -> list[dict[str, Any]]:
     cancel_stale_orders()
     with db() as con:
@@ -2742,7 +2934,7 @@ def mark_paid(order_id: str) -> dict[str, Any]:
     }
 
 
-@app.post("/api/orders/{order_id}/mark-ready", dependencies=[Depends(require_admin)])
+@app.post("/api/orders/{order_id}/mark-ready", dependencies=[Depends(require_staff)])
 def mark_ready(order_id: str) -> dict[str, Any]:
     """Última etapa que o cliente vê em "Minha conta": pedido pronto."""
     row = load_order(order_id)
@@ -2768,7 +2960,164 @@ ORDER_STAGES = {
 }
 
 
-@app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_admin)])
+class StaffLogin(BaseModel):
+    user: str
+    password: str
+    code: str = ""
+
+
+@app.post("/api/admin/login")
+def staff_login(payload: StaffLogin, request: Request) -> dict[str, Any]:
+    user = payload.user.strip()
+    account = check_staff_password(request, user, payload.password)
+    totp = staff_totp_row(account["user"])
+    if totp and totp["enabled"]:
+        if not payload.code.strip():
+            return {"need_code": True}
+        fail_keys = [f"admin-ip:{client_ip(request)}", f"admin-user:{user.lower()[:100]}"]
+        counter = totp_match(totp["secret"], payload.code, int(totp["last_counter"] or 0))
+        if counter is None:
+            login_failed(fail_keys, "Código de verificação inválido.")
+        with db() as con:
+            con.execute("UPDATE staff_totp SET last_counter=? WHERE username=?", (counter, account["user"]))
+    login_ok([f"admin-ip:{client_ip(request)}", f"admin-user:{user.lower()[:100]}"])
+    return {"token": new_staff_session(account["user"]), "user": account["user"], "role": account["role"],
+            "two_factor": bool(totp and totp["enabled"]), "expires_in": STAFF_SESSION_SECONDS}
+
+
+@app.post("/api/admin/logout")
+def staff_logout(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+    if staff["token"]:
+        with db() as con:
+            con.execute("DELETE FROM staff_sessions WHERE token_hash=?",
+                        (hashlib.sha256(staff["token"].encode()).hexdigest(),))
+    return {"ok": True}
+
+
+@app.get("/api/admin/me")
+def staff_me(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+    return {"user": staff["user"], "role": staff["role"], "role_name": ROLES[staff["role"]],
+            "two_factor": staff_has_2fa(staff["user"])}
+
+
+class TwoFactorCode(BaseModel):
+    code: str = ""
+    password: str = ""
+
+
+@app.post("/api/admin/2fa/setup")
+def staff_2fa_setup(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+    """Gera a chave nova (ainda desligada). Liga só depois de confirmar um código."""
+    if staff_has_2fa(staff["user"]):
+        raise HTTPException(400, "A verificação em duas etapas já está ligada.")
+    secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+    with db() as con:
+        con.execute("DELETE FROM staff_totp WHERE username=?", (staff["user"],))
+        con.execute("INSERT INTO staff_totp (username, secret, enabled, last_counter) VALUES(?,?,0,0)",
+                    (staff["user"], secret))
+    issuer = urllib.parse.quote(str(CONFIG.get("store_name") or "Ripfire Studio"))
+    label = urllib.parse.quote(f"{CONFIG.get('store_name') or 'Ripfire'} Admin:{staff['user']}")
+    return {"secret": secret, "uri": f"otpauth://totp/{label}?secret={secret}&issuer={issuer}&digits=6&period=30"}
+
+
+@app.post("/api/admin/2fa/enable")
+def staff_2fa_enable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff)):
+    row = staff_totp_row(staff["user"])
+    if not row:
+        raise HTTPException(400, "Gere a chave primeiro.")
+    fail_keys = [f"2fa:{staff['user']}"]
+    login_guard(fail_keys)
+    counter = totp_match(row["secret"], payload.code, int(row["last_counter"] or 0))
+    if counter is None:
+        login_failed(fail_keys, "Código inválido. Confira a hora do celular e tente o código novo.", 400)
+    with db() as con:
+        con.execute("UPDATE staff_totp SET enabled=1, last_counter=? WHERE username=?", (counter, staff["user"]))
+        # Liga o 2FA e derruba as outras sessões desse usuário.
+        con.execute("DELETE FROM staff_sessions WHERE username=? AND token_hash!=?",
+                    (staff["user"], hashlib.sha256((staff["token"] or "").encode()).hexdigest()))
+    return {"ok": True}
+
+
+@app.post("/api/admin/2fa/disable")
+def staff_2fa_disable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff)):
+    check_staff_password(request, staff["user"], payload.password)
+    row = staff_totp_row(staff["user"])
+    if row and row["enabled"] and totp_match(row["secret"], payload.code, int(row["last_counter"] or 0)) is None:
+        raise HTTPException(400, "Código de verificação inválido.")
+    with db() as con:
+        con.execute("DELETE FROM staff_totp WHERE username=?", (staff["user"],))
+    return {"ok": True}
+
+
+@app.get("/api/admin/staff", dependencies=[Depends(require_admin)])
+def staff_list() -> list[dict[str, Any]]:
+    with db() as con:
+        rows = [dict(r) for r in con.execute("SELECT username, role, created_at, created_by FROM staff_users").fetchall()]
+        twofa = {r["username"] for r in con.execute("SELECT username FROM staff_totp WHERE enabled=1").fetchall()}
+    out = [{"user": a["user"], "role": a["role"], "source": "config", "created_at": None, "created_by": ""}
+           for a in config_staff().values()]
+    out += [{"user": r["username"], "role": r["role"], "source": "equipe", "created_at": r["created_at"],
+             "created_by": r["created_by"]} for r in rows if r["username"] not in config_staff()]
+    for item in out:
+        item["two_factor"] = item["user"] in twofa
+        item["role_name"] = ROLES.get(item["role"], item["role"])
+    return out
+
+
+class StaffCreate(BaseModel):
+    user: str
+    password: str
+    role: str
+
+
+@app.post("/api/admin/staff")
+def staff_create(payload: StaffCreate, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    user = payload.user.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{3,40}", user):
+        raise HTTPException(400, "Usuário com 3 a 40 letras, números, ponto, traço ou sublinhado.")
+    if payload.role not in ROLES:
+        raise HTTPException(400, "Papel inválido.")
+    if len(payload.password) < 12:
+        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    if staff_account(user):
+        raise HTTPException(400, "Já existe um usuário com esse nome.")
+    with db() as con:
+        con.execute("INSERT INTO staff_users (username, password_hash, role, created_at, created_by) VALUES(?,?,?,?,?)",
+                    (user, hash_password(payload.password), payload.role, time.time(), staff["user"]))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/staff/{user}")
+def staff_delete(user: str, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    if user in config_staff():
+        raise HTTPException(400, "Esse usuário vem do config.json; remova por lá.")
+    if user == staff["user"]:
+        raise HTTPException(400, "Você não pode remover o próprio usuário.")
+    with db() as con:
+        con.execute("DELETE FROM staff_users WHERE username=?", (user,))
+        con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
+        con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/staff/{user}/2fa")
+def staff_reset_2fa(user: str, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Pra quem perdeu o celular: desliga o 2FA e derruba as sessões dele."""
+    with db() as con:
+        con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
+        con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    return {"ok": True}
+
+
+@app.get("/api/admin/security/ip", dependencies=[Depends(require_admin)])
+def security_ip(request: Request) -> dict[str, Any]:
+    """Diagnóstico: de onde o servidor acha que a chamada veio."""
+    names = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip", "x-real-ip", "x-forwarded-proto")
+    return {"client_ip": client_ip(request), "connection": request.client.host if request.client else None,
+            "headers": {k: request.headers.get(k) for k in names}, "client_ip_header": CLIENT_IP_HEADER}
+
+
+@app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_staff)])
 def set_order_stage(order_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     stage = str(payload.get("stage") or "").upper()
     if stage not in ORDER_STAGES:
@@ -2925,7 +3274,7 @@ def admin_dashboard(days: int = 30) -> dict[str, Any]:
                 v for k, v in costs.items() if k != "shirt_cost") or any(costs["shirt_cost"].values())}
 
 
-@app.get("/api/admin/orders/{order_id}/files", dependencies=[Depends(require_admin)])
+@app.get("/api/admin/orders/{order_id}/files", dependencies=[Depends(require_staff)])
 def download_order_files(order_id: str):
     """Arquivos do pedido num zip, baixados pelo Admin. Com o site num
     servidor, orders/, PRODUCAO_PAGA/ e SomenteDTFs/ ficam lá, não no PC
@@ -2961,7 +3310,7 @@ def download_order_files(order_id: str):
     )
 
 
-@app.get("/api/admin/orders/{order_id}/file-links", dependencies=[Depends(require_admin)])
+@app.get("/api/admin/orders/{order_id}/file-links", dependencies=[Depends(require_staff)])
 def order_file_links(order_id: str) -> dict[str, Any]:
     """Links assinados (valem 1 hora) pra cada arquivo de produção do pedido,
     direto do Supabase Storage. É o que o sync_producao.py usa no PC da
@@ -3117,13 +3466,13 @@ PUBLIC_ROUTES = {
     ("GET", "/api/library/categories/{category_id}/arts"), ("GET", "/api/library/arts/{art_id}/thumb"),
     ("GET", "/media/{file_path:path}"),
     # Entrar, criar conta e sair (com limite de tentativas)
-    ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/admin/login"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
     # Pagamentos: conferidos pelo segredo do webhook ou consultando a API do Mercado Pago
     ("POST", "/api/payments/webhook"), ("POST", "/api/payments/mercadopago"),
     # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
     ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
 }
-AUTH_DEPENDENCIES = {"require_admin", "require_customer"}
+AUTH_DEPENDENCIES = {"require_admin", "require_staff", "require_customer"}
 
 
 def unprotected_routes() -> list[str]:

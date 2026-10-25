@@ -658,3 +658,16 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .adm-mk>div{aspect-ratio:1;background:#f2f2ef;display:grid;place-items:center}
 .adm-mk img{width:100%;height:100%;object-fit:contain}
 @media(max-width:900px){.adm-tabs{flex-wrap:nowrap;overflow-x:auto}.adm-tabs button{flex:none}.adm-cards{grid-template-columns:1fr 1fr}.adm-kpi b{font-size:24px}.adm-two,.adm-lib{grid-template-columns:1fr}.adm-inline4{grid-template-columns:1fr 1fr}.adm-head h1{font-size:26px}}
+/* segurança */
+.adm-head-actions{display:flex;gap:8px}
+.adm-code{margin-top:6px}.adm-code label{display:block;font-size:13px;font-weight:700;margin:6px 0 2px}
+.adm-code input{font-size:22px;letter-spacing:6px;text-align:center}
+.adm-staff-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:12px}
+.adm-staff-form label{display:block;margin:0}.adm-staff-form input,.adm-staff-form select{margin:0;min-width:170px}
+.adm-tfa{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;margin-top:14px;background:#e8e8e4;border:1px solid #cbcbc6;border-radius:14px;padding:16px}
+.adm-tfa canvas{background:#fff;border-radius:10px;flex:none}
+.adm-tfa ol{margin:0;padding-left:20px;flex:1;min-width:240px;font-size:14px;line-height:1.6}
+.adm-tfa code{background:#fff;padding:2px 6px;border-radius:6px;font-size:13px;word-break:break-all}
+.adm-tfa form{flex-basis:100%}
+.adm-table .pos{color:#1f7d52;font-weight:700}.adm-table .neg{color:#b3261e;font-weight:700}
+.adm-tfa form input{width:190px;min-width:0;font-size:20px;letter-spacing:4px;text-align:center}

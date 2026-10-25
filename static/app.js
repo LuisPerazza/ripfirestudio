@@ -1,6 +1,6 @@
 (() => {
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-let CONFIG, artworks=[], selected=null, dragging=null, adminKey=null, adminUser=null, shirtMockups=[];
+let CONFIG, artworks=[], selected=null, dragging=null, adminKey=null, adminUser=null, adminRole=null, shirtMockups=[];
 let shirtResize=null; // {piece,pointerId} - arraste do quadradinho de esticar (mesmo modelo da chapa de DTF)
 let currentModel='regular', currentSide='FRONT';
 let sidesElements={FRONT:[],BACK:[],SLEEVE_R:[],SLEEVE_L:[]};
@@ -359,6 +359,7 @@ async function init(){
   renderGangList(); renderMockupsList();
   window.addEventListener('resize',positionPrintArea);
   window.addEventListener('hashchange',openAdminFromHash);
+  restoreAdminSession();
   openAdminFromHash();
   handlePaymentReturn();  // volta do Mercado Pago (?mp=retorno)
 }
@@ -407,7 +408,7 @@ function bind(){
   const onEnter=(sels,fn)=>sels.forEach(s=>$(s).addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();fn()}}));
   onEnter(['#loginEmail','#loginPassword'],submitLogin);
   onEnter(['#regName','#regEmail','#regPassword','#regPhone','#regCep','#regNumber','#regDocument'],submitRegister);
-  onEnter(['#adminUser','#adminPassword'],submitAdminLogin);
+  onEnter(['#adminUser','#adminPassword','#adminCode'],submitAdminLogin);
   $('#saleType').onchange=()=>{toggleSale();updatePrice()};$('#shirtColor').onchange=updateShirtVisual;$('#sizeGrid').oninput=updatePrice;
   $$('#sideTabs [data-side]').forEach(b=>b.onclick=()=>selectSide(b.dataset.side));
   const addShirtFile=f=>{if(!f)return;if(!f.type.startsWith('image/'))return alert('Selecione um arquivo de imagem (PNG, JPG ou WEBP).');addImage(URL.createObjectURL(f),'UPLOAD').catch(err=>alert(err.message))};
@@ -1285,8 +1286,20 @@ async function createOrder(){
   }catch(e){ stat('#checkoutStatus',e.message,false); }
   finally{ btn.disabled=false; }
 }
-function adminHeaders(extra){return {...(extra||{}), 'X-Admin-Key': adminKey||'', 'X-Admin-User': adminUser||''}}
-function clearAdmin(){adminKey=null;adminUser=null;syncAdminUi()}
+// O Admin entra com usuário, senha e (se ligado) o código do 2FA e recebe um
+// token de sessão de 12 h. Só o token vai nas chamadas; a senha não fica guardada.
+function adminHeaders(extra){return {...(extra||{}), 'X-Admin-Token': adminKey||''}}
+function saveAdminSession(){
+  try{ adminKey?sessionStorage.setItem('rf_admin',JSON.stringify({token:adminKey,user:adminUser,role:adminRole})):sessionStorage.removeItem('rf_admin'); }catch{}
+}
+function restoreAdminSession(){
+  try{ const a=JSON.parse(sessionStorage.getItem('rf_admin')||'null'); if(a&&a.token){adminKey=a.token;adminUser=a.user;adminRole=a.role;} }catch{}
+}
+function clearAdmin(){adminKey=null;adminUser=null;adminRole=null;saveAdminSession();syncAdminUi()}
+async function logoutAdmin(){
+  if(adminKey) await fetch('/api/admin/logout',{method:'POST',headers:adminHeaders()}).catch(()=>{});
+  clearAdmin(); history.replaceState(null,'',location.pathname); tab('home');
+}
 // O botão Admin fica escondido dos clientes: aparece abrindo o site com
 // #admin no fim do endereço (ex.: http://127.0.0.1:8787/#admin) ou depois
 // de entrar. Mover/redimensionar a área de impressão grava no mockup, então
@@ -1300,23 +1313,25 @@ function syncAdminUi(){
 }
 function openAdminFromHash(){syncAdminUi();if(location.hash==='#admin')tab('admin')}
 function openAdminLogin(){
-  $('#adminUser').value=''; $('#adminPassword').value='';
+  $('#adminUser').value=''; $('#adminPassword').value=''; $('#adminCode').value=''; $('#adminCodeWrap').hidden=true;
   $('#adminLoginStatus').textContent=''; $('#adminLoginStatus').className='';
   $('#adminLoginModal').showModal();
 }
 async function submitAdminLogin(){
-  const user=$('#adminUser').value.trim(), pass=$('#adminPassword').value;
+  const user=$('#adminUser').value.trim(), pass=$('#adminPassword').value, code=$('#adminCode').value.trim();
   if(!user || !pass) return stat('#adminLoginStatus','Usuário ou senha inválidos.',false);
-  adminUser=user; adminKey=pass;
+  const btn=$('#adminLoginBtn'); btn.disabled=true;
   try{
-    const r=await fetch('/api/orders',{headers:adminHeaders()});
-    // Antes só o 401 era erro: com admin_key sem configurar (500) o login "funcionava".
-    if(!r.ok){
-      const d=await r.json().catch(()=>({}));
-      clearAdmin();
-      return stat('#adminLoginStatus', d.detail||'Usuário ou senha inválidos.', false); // traz quantas tentativas sobram
+    const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,password:pass,code})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) return stat('#adminLoginStatus', d.detail||'Usuário ou senha inválidos.', false); // traz quantas tentativas sobram
+    if(d.need_code){
+      $('#adminCodeWrap').hidden=false; $('#adminCode').focus();
+      return stat('#adminLoginStatus','Digite o código de 6 dígitos do app autenticador.',true);
     }
-  }catch(e){ clearAdmin(); return stat('#adminLoginStatus','Não foi possível falar com o servidor.',false); }
+    adminKey=d.token; adminUser=d.user; adminRole=d.role; saveAdminSession();
+  }catch(e){ return stat('#adminLoginStatus','Não foi possível falar com o servidor.',false); }
+  finally{ btn.disabled=false; }
   syncAdminUi();
   stat('#adminLoginStatus','Login realizado!',true);
   setTimeout(()=>$('#adminLoginModal').close(),400);
@@ -1872,16 +1887,22 @@ function admShow(pane){
   $$('[data-adm]').forEach(b=>{const on=b.dataset.adm===pane; b.classList.toggle('on',on); b.setAttribute('aria-selected',String(on));});
   $$('.adm-pane').forEach(p=>p.hidden=p.dataset.pane!==pane);
   ({dash:loadDashboard,orders:loadOrders,customers:loadCustomers,costs:loadCosts,arts:renderLibraryAdmin,
-    mockups:renderMockupsList,more:()=>{loadLgpdRequests();loadBackups()}}[pane]||(()=>{}))();
+    mockups:renderMockupsList,more:()=>{loadLgpdRequests();loadBackups()},security:loadSecurity}[pane]||(()=>{}))();
 }
+const STAFF_PANES={producao:['orders','security']};
 function enterAdmin(){
   if(!adminKey){ openAdminLogin(); return; }
-  $('#admWho').textContent=`Logado como ${adminUser}`;
+  const allowed=STAFF_PANES[adminRole];
+  $('#admWho').textContent=`Logado como ${adminUser} · ${adminRole==='producao'?'Produção':'Admin'}`;
+  $$('[data-adm]').forEach(b=>b.hidden=!!allowed&&!allowed.includes(b.dataset.adm));
+  if(allowed&&!allowed.includes(ADM.pane)) ADM.pane='orders';
   admShow(ADM.pane);
 }
 function bindAdmin(){
   $$('[data-adm]').forEach(b=>b.onclick=()=>admShow(b.dataset.adm));
   $('#refreshOrders').onclick=()=>admShow(ADM.pane);
+  $('#adminLogout').onclick=logoutAdmin;
+  $('#staffForm').onsubmit=addStaff;
   $$('#admin [data-days]').forEach(b=>b.onclick=()=>{ADM.days=Number(b.dataset.days);$$('#admin [data-days]').forEach(x=>x.classList.toggle('on',x===b));loadDashboard()});
   $$('#admin [data-group]').forEach(b=>b.onclick=()=>{ADM.group=b.dataset.group;$$('#admin [data-group]').forEach(x=>x.classList.toggle('on',x===b));if(ADM.dash)renderDashboard()});
   $('#ordersSearch').oninput=renderOrders;
@@ -2014,7 +2035,7 @@ function renderOrders(){
         <td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
           :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}</td>
-        <td class="adm-actions">${o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
+        <td class="adm-actions">${adminRole!=='producao'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
@@ -2166,6 +2187,73 @@ function renderMockupsList(){
     try{ await admFetch(`/api/admin/shirt-mockups/${b.dataset.delmock}`,{method:'DELETE'}); }catch(e){ return alert(e.message); }
     await loadShirtMockups(); renderMockupsList(); updateShirtVisual();
   });
+}
+
+/* ---------- Admin: segurança (2FA e equipe) ---------- */
+async function loadSecurity(){
+  let me;
+  try{ me=await admFetch('/api/admin/me'); }catch(e){ return; }
+  const badge=$('#tfaBadge');
+  badge.textContent=me.two_factor?'Ligada':'Desligada';
+  badge.style.setProperty('--sc',me.two_factor?'#2e9e6b':'#9a9aa0');
+  $('#tfaBody').innerHTML=me.two_factor
+    ?`<p class="adm-note">Seu login já pede o código do app. Para desligar, confirme a senha e um código.</p>
+      <form id="tfaOff" class="adm-staff-form"><label><span class="adm-label">Senha</span><input id="tfaOffPass" type="password" required autocomplete="current-password"></label>
+      <label><span class="adm-label">Código</span><input id="tfaOffCode" inputmode="numeric" maxlength="7" required></label>
+      <button class="adm-btn danger">Desligar 2FA</button></form><div id="tfaStatus" role="status" aria-live="polite"></div>`
+    :`<button type="button" id="tfaStart" class="primary">Ligar verificação em duas etapas</button><div id="tfaSetup"></div><div id="tfaStatus" role="status" aria-live="polite"></div>`;
+  if(me.two_factor){
+    $('#tfaOff').onsubmit=async ev=>{ev.preventDefault();
+      try{ await admFetch('/api/admin/2fa/disable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('#tfaOffPass').value,code:$('#tfaOffCode').value})});
+        loadSecurity(); }catch(e){ stat('#tfaStatus',e.message,false); } };
+  }else{
+    $('#tfaStart').onclick=startTwoFactor;
+  }
+  $('#staffCard').hidden=me.role!=='admin';
+  if(me.role==='admin') loadStaff();
+}
+async function startTwoFactor(){
+  try{
+    const d=await admFetch('/api/admin/2fa/setup',{method:'POST'});
+    $('#tfaStart').hidden=true;
+    $('#tfaSetup').innerHTML=`<div class="adm-tfa">
+      <canvas id="tfaQr" width="220" height="220" aria-label="QR code para o app autenticador"></canvas>
+      <ol><li>Abra o app autenticador no celular e escolha <b>adicionar conta</b> / <b>ler QR code</b>.</li>
+      <li>Aponte para o QR code. Sem câmera? Digite a chave: <code>${esc(d.secret.replace(/(.{4})/g,'$1 ').trim())}</code></li>
+      <li>Digite o código de 6 dígitos que aparece no app:</li></ol>
+      <form id="tfaConfirm" class="adm-staff-form"><input id="tfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" required>
+      <button class="primary">Confirmar e ligar</button></form></div>`;
+    try{ await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js'); new QRious({element:$('#tfaQr'),value:d.uri,size:220,padding:12}); }
+    catch{ $('#tfaQr').hidden=true; }
+    $('#tfaCode').focus();
+    $('#tfaConfirm').onsubmit=async ev=>{ev.preventDefault();
+      try{ await admFetch('/api/admin/2fa/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('#tfaCode').value})});
+        await loadSecurity(); stat('#tfaStatus','Pronto! A partir de agora o login do Admin pede o código do app.',true); }
+      catch(e){ stat('#tfaStatus',e.message,false); } };
+  }catch(e){ stat('#tfaStatus',e.message,false); }
+}
+async function loadStaff(){
+  let list=[];
+  try{ list=await admFetch('/api/admin/staff'); }catch(e){ return stat('#staffStatus',e.message,false); }
+  $('#staffTable').innerHTML=`<table class="adm-table"><thead><tr><th>Usuário</th><th>Papel</th><th>2FA</th><th>Origem</th><th></th></tr></thead><tbody>
+    ${list.map(u=>`<tr><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.role_name)}</td>
+      <td>${u.two_factor?'<span class="pos">Ligado</span>':'<span class="neg">Desligado</span>'}</td>
+      <td>${u.source==='config'?'config.json':'Criado no Admin'}</td>
+      <td class="adm-actions">${u.two_factor&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
+        ${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
+    </tbody></table>`;
+  $$('[data-reset2fa]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Desligar o 2FA de ${b.dataset.reset2fa}? Use quando a pessoa perdeu o celular.`)) return;
+    try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.reset2fa)}/2fa`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
+  $$('[data-delstaff]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Remover o usuário ${b.dataset.delstaff}?`)) return;
+    try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.delstaff)}`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
+}
+async function addStaff(ev){
+  ev.preventDefault();
+  try{
+    await admFetch('/api/admin/staff',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user:$('#staffUser').value.trim(),password:$('#staffPass').value,role:$('#staffRole').value})});
+    $('#staffForm').reset(); stat('#staffStatus','Usuário criado.',true); loadStaff();
+  }catch(e){ stat('#staffStatus',e.message,false); }
 }
 
 /* ---------- Admin: solicitações LGPD ---------- */
