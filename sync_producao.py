@@ -346,7 +346,7 @@ def order_text(order: dict, data: dict, sheet_name: str, arts: list[tuple[dict, 
         "ARTES (na ordem em que o cliente montou)",
     ]
     for i, (s, fname) in enumerate(arts, start=1):
-        lines.append(f"{i:02d}. {s.get('name') or 'Sem título'} - {cm(s.get('width_cm'))} x {cm(s.get('height_cm'))} cm"
+        lines.append(f"{i:02d}. {Path(str(s.get('name') or 'Sem título')).stem} - {cm(s.get('width_cm'))} x {cm(s.get('height_cm'))} cm"
                      f" - {int(s.get('qty') or 0)} un."
                      + (f" - {fname}" if fname else " - (sem arquivo separado; usar a chapa)"))
     lines += [
