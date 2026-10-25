@@ -715,12 +715,16 @@ _RATE_LIMITS: dict[str, list[float]] = {}
 # apaga o que o visitante mandar). Sem ele, vale o IP da conexão. O
 # X-Forwarded-For sozinho não serve: o primeiro IP da lista é o visitante quem
 # escreve, e trocá-lo a cada tentativa furaria o limite de senha por IP.
+# No Render o tráfego passa pela Cloudflare, que grava o IP real em
+# CF-Connecting-IP/True-Client-IP (e apaga o que o visitante mandar).
 CLIENT_IP_HEADER = os.getenv("CLIENT_IP_HEADER", "").strip().lower()
+IP_HEADERS = ([CLIENT_IP_HEADER] if CLIENT_IP_HEADER else
+              ["cf-connecting-ip", "true-client-ip"] if os.getenv("RENDER") else [])
 
 
 def client_ip(request: Request) -> str:
-    if CLIENT_IP_HEADER:
-        value = (request.headers.get(CLIENT_IP_HEADER) or "").split(",")[-1].strip()
+    for name in IP_HEADERS:
+        value = (request.headers.get(name) or "").split(",")[-1].strip()
         if value:
             return value[:64]
     return request.client.host if request.client else "unknown"
@@ -3114,7 +3118,7 @@ def security_ip(request: Request) -> dict[str, Any]:
     """Diagnóstico: de onde o servidor acha que a chamada veio."""
     names = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip", "x-real-ip", "x-forwarded-proto")
     return {"client_ip": client_ip(request), "connection": request.client.host if request.client else None,
-            "headers": {k: request.headers.get(k) for k in names}, "client_ip_header": CLIENT_IP_HEADER}
+            "headers": {k: request.headers.get(k) for k in names}, "ip_headers": IP_HEADERS}
 
 
 @app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_staff)])
