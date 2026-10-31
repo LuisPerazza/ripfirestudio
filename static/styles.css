@@ -696,3 +696,15 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 html[data-theme="dark"] .theme-toggle .ico-sun{display:none}
 html[data-theme="dark"] .theme-toggle .ico-moon{display:block;fill:currentColor;stroke:none}
 body.is-home .theme-toggle,body.is-editor .theme-toggle,body.is-digital .theme-toggle{filter:drop-shadow(0 1px 4px rgba(0,0,0,.7))}
+/* Menu do topo: todos no formato pílula do "Entrar". Passar o mouse ou clicar
+   levanta o botão com sombra (escura no tema claro, brilho branco no escuro). */
+.topbar nav{align-items:center;gap:8px}
+.topbar .nav-btn,.topbar .nav-account{border-radius:999px;padding:9px 18px;margin-left:0;font-family:'Barlow',Arial,sans-serif;font-weight:700;font-size:16px;letter-spacing:.5px;text-transform:uppercase;line-height:1.2;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease}
+.topbar .nav-btn{color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);text-shadow:none;backdrop-filter:blur(6px)}
+.topbar .nav-btn.active{background:linear-gradient(135deg,#b57edc,var(--accent-dark));border-color:transparent;box-shadow:0 6px 18px rgba(155,89,182,.4)}
+.topbar .nav-account{border:1px solid transparent}
+.topbar .nav-btn:hover,.topbar .nav-btn:focus-visible,.topbar .nav-btn:active,.topbar .nav-account:hover,.topbar .nav-account:focus-visible,.topbar .nav-account:active{transform:translateY(-3px);box-shadow:0 10px 22px rgba(0,0,0,.45)}
+.topbar .nav-btn:hover:not(.active){background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.3)}
+.topbar .nav-btn:active,.topbar .nav-account:active{transform:translateY(-1px)}
+.topbar .nav-btn:focus-visible,.topbar .nav-account:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.topbar .theme-toggle:hover{transform:translateY(-3px);box-shadow:0 10px 22px rgba(0,0,0,.45)}

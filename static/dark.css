@@ -421,7 +421,18 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) .theme-toggle svg{fill:none;stroke:currentColor}
 :where(html[data-theme="dark"]) .theme-toggle .ico-sun circle{fill:currentColor;stroke:none}
 :where(html[data-theme="dark"])[data-theme="dark"] .theme-toggle .ico-moon{fill:currentColor;stroke:none}
+:where(html[data-theme="dark"]) .topbar .nav-btn{color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)}
+:where(html[data-theme="dark"]) .topbar .nav-btn.active{background:linear-gradient(135deg,#b57edc,var(--accent-dark));border-color:transparent;box-shadow:0 6px 18px rgba(155,89,182,.4)}
+:where(html[data-theme="dark"]) .topbar .nav-account{border:1px solid transparent}
+:where(html[data-theme="dark"]) .topbar .nav-btn:hover,:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-btn:active,:where(html[data-theme="dark"]) .topbar .nav-account:hover,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:active{box-shadow:0 10px 22px rgba(0,0,0,.45)}
+:where(html[data-theme="dark"]) .topbar .nav-btn:hover:not(.active){background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.3)}
+:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible{outline:2px solid #1c1c1f}
+:where(html[data-theme="dark"]) .topbar .theme-toggle:hover{box-shadow:0 10px 22px rgba(0,0,0,.45)}
 /* Ajustes à mão do tema escuro (o gerador cola isto no fim do dark.css). */
 /* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
 html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
 html[data-theme="dark"] .lib-apply:hover,html[data-theme="dark"] .lib-dl:hover{background:#ece1f2}
+/* Menu do topo: no escuro a sombra do botão que sobe é um brilho branco. */
+html[data-theme="dark"] .topbar .nav-btn:hover,html[data-theme="dark"] .topbar .nav-btn:focus-visible,html[data-theme="dark"] .topbar .nav-btn:active,
+html[data-theme="dark"] .topbar .nav-account:hover,html[data-theme="dark"] .topbar .nav-account:focus-visible,html[data-theme="dark"] .topbar .nav-account:active,
+html[data-theme="dark"] .topbar .theme-toggle:hover{box-shadow:0 8px 22px rgba(255,255,255,.3)}
