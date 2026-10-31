@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=51">
+  <link rel="stylesheet" href="/static/styles.css?v=53">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -446,12 +446,14 @@
         </div>
         <div class="adm-card" id="staffCard">
           <div class="adm-card-head"><h3>Equipe e permissões</h3></div>
+          <div id="configLoginsBox" class="adm-hint" hidden></div>
           <p class="adm-note"><b>Admin</b> vê e muda tudo. <b>Produção</b> só vê os pedidos, baixa os arquivos e muda a etapa: é o login do PC da impressão (programa de sincronizar).</p>
           <div id="staffTable" class="adm-table-wrap"></div>
           <form id="staffForm" class="adm-staff-form">
             <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: producao" autocomplete="off"></label>
+            <label><span class="adm-label">E-mail (obrigatório para Admin)</span><input id="staffEmail" type="email" autocomplete="off" placeholder="nome@email.com"></label>
             <label><span class="adm-label">Senha (mín. 12)</span><input id="staffPass" type="password" minlength="12" required autocomplete="new-password"></label>
-            <label><span class="adm-label">Papel</span><select id="staffRole"><option value="producao">Produção</option><option value="admin">Admin</option></select></label>
+            <label><span class="adm-label">Papel</span><select id="staffRole"><option value="admin">Admin</option><option value="producao">Produção</option></select></label>
             <button class="primary">Adicionar</button>
           </form>
           <div id="staffStatus" role="status" aria-live="polite"></div>
@@ -538,6 +540,13 @@
           <label class="sr-only" for="loginEmail">E-mail</label><input id="loginEmail" placeholder="E-mail" type="email" autocomplete="email">
           <label class="sr-only" for="loginPassword">Senha</label><input id="loginPassword" placeholder="Senha" type="password" autocomplete="current-password">
           <button type="button" id="loginSubmitBtn" class="primary full">Entrar</button>
+          <button type="button" id="forgotLink" class="link-btn">Esqueci minha senha</button>
+        </div>
+        <div id="authForgotForm" class="auth-pane" hidden>
+          <p class="auth-hint">Digite o e-mail da sua conta. Enviamos um link para você criar uma senha nova.</p>
+          <label class="sr-only" for="forgotEmail">E-mail</label><input id="forgotEmail" placeholder="E-mail" type="email" autocomplete="email">
+          <button type="button" id="forgotSubmitBtn" class="primary full">Enviar link</button>
+          <button type="button" id="forgotBack" class="link-btn">Voltar para entrar</button>
         </div>
         <div id="authRegisterForm" class="auth-pane" hidden>
           <label class="sr-only" for="regName">Nome completo</label><input id="regName" placeholder="Nome completo" autocomplete="name">
@@ -570,10 +579,23 @@
       <input id="adminCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000">
     </div>
     <button type="button" id="adminLoginBtn" class="primary full">Entrar</button>
+    <button type="button" id="adminForgotLink" class="link-btn">Esqueci minha senha</button>
     <div id="adminLoginStatus" role="status" aria-live="polite"></div>
   </form>
 </dialog>
 
-<script src="/static/app.js?v=59"></script>
+<dialog id="resetModal">
+  <form method="dialog" class="modal-card auth-card">
+    <button class="close" value="cancel" aria-label="Fechar">×</button>
+    <h2 id="resetTitle">Criar senha nova</h2>
+    <p class="auth-hint" id="resetHint"></p>
+    <label class="sr-only" for="resetPass1">Senha nova</label><input id="resetPass1" type="password" placeholder="Senha nova" autocomplete="new-password">
+    <label class="sr-only" for="resetPass2">Repita a senha</label><input id="resetPass2" type="password" placeholder="Repita a senha nova" autocomplete="new-password">
+    <button type="button" id="resetSubmitBtn" class="primary full">Salvar senha</button>
+    <div id="resetStatus" role="status" aria-live="polite"></div>
+  </form>
+</dialog>
+
+<script src="/static/app.js?v=60"></script>
 </body>
 </html>

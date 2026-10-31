@@ -178,7 +178,13 @@ lá um atalho do `sincronizar_producao.bat`.
 - **Headers**: CSP (só roda script do site e dos serviços que a loja usa),
   anti-iframe, nosniff, Referrer-Policy e Permissions-Policy em toda resposta.
 - **Admin**: login com sessão de 12 h e verificação em duas etapas (aba
-  Segurança). Papéis: Admin (tudo) e Produção (pedidos e arquivos).
+  Segurança), obrigatória para o papel Admin. Papéis: Admin (tudo) e
+  Produção (pedidos e arquivos). Admin é criado na aba Segurança, com e-mail;
+  os logins do config.json podem ser desligados lá mesmo.
+- **Recuperar senha** (cliente e Admin): link por e-mail, vale 30 min e uma
+  vez só. O Render grátis bloqueia SMTP, então o e-mail sai pela API do
+  Resend (`RESEND_API_KEY`) ou do Brevo (`BREVO_API_KEY`), com o remetente em
+  `MAIL_FROM` (ex.: `Ripfire Studio <nao-responda@ripfire.com.br>`).
 - **Limites**: senha errada (cliente e Admin) bloqueia por 15 min depois de 5
   tentativas; cada IP faz no máximo 900 chamadas à API em 5 min.
 - **CSRF**: o login é por token no header (sem cookie) e chamada que muda

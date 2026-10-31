@@ -671,3 +671,12 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .adm-tfa form{flex-basis:100%}
 .adm-table .pos{color:#1f7d52;font-weight:700}.adm-table .neg{color:#b3261e;font-weight:700}
 .adm-tfa form input{width:190px;min-width:0;font-size:20px;letter-spacing:4px;text-align:center}
+/* recuperar senha */
+.link-btn{display:block;margin:10px auto 0;border:0;background:none;color:var(--accent-dark);font-weight:700;font-size:13.5px;text-decoration:underline;cursor:pointer;padding:4px}
+.link-btn:hover{color:var(--accent)}
+.auth-hint{font-size:13.5px;color:#5c5c62;margin:0 0 10px;line-height:1.45}
+#resetModal{width:min(420px,92vw)}
+#resetModal input{margin:6px 0}
+.adm-table tr.off td{opacity:.55}
+#configLoginsBox .adm-btn{margin-left:6px}
+#authGuest.forgot-mode .auth-tabs,#authGuest.forgot-mode #authGoogle{display:none}

@@ -32,3 +32,10 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
+      # E-mail (recuperar senha): uma das duas chaves + o remetente.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false

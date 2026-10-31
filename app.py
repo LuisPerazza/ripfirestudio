@@ -330,6 +330,11 @@ def init_db():
                        enabled INTEGER NOT NULL DEFAULT 0, last_counter INTEGER NOT NULL DEFAULT 0)""")
         con.execute("""CREATE TABLE IF NOT EXISTS staff_sessions (token_hash TEXT PRIMARY KEY, username TEXT NOT NULL,
                        created_at REAL NOT NULL)""")
+        staff_cols = {r["name"] for r in con.execute("PRAGMA table_info(staff_users)").fetchall()}
+        if "email" not in staff_cols:
+            con.execute("ALTER TABLE staff_users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+        con.execute("""CREATE TABLE IF NOT EXISTS password_resets (token_hash TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                       subject TEXT NOT NULL, created_at REAL NOT NULL, used INTEGER NOT NULL DEFAULT 0)""")
 
         mockup_cols = {r["name"] for r in con.execute("PRAGMA table_info(shirt_mockups)").fetchall()}
         if "side" not in mockup_cols:
@@ -567,8 +572,33 @@ ROLES = {"admin": "Admin", "producao": "Produção"}
 STAFF_SESSION_SECONDS = 12 * 3600
 
 
-def config_staff() -> dict[str, dict[str, str]]:
+def get_setting(key: str, default: str = "") -> str:
+    with db() as con:
+        row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    with db() as con:
+        con.execute("INSERT INTO settings (key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value))
+
+
+def db_admin_count() -> int:
+    with db() as con:
+        return con.execute("SELECT COUNT(*) AS n FROM staff_users WHERE role='admin'").fetchone()["n"]
+
+
+def config_logins_disabled() -> bool:
+    """Os logins do config.json podem ser desligados no Admin (Segurança),
+    desde que exista ao menos um admin criado no Admin, pra ninguém ficar trancado fora."""
+    return get_setting("config_logins_disabled") == "1" and db_admin_count() > 0
+
+
+def config_staff(include_disabled: bool = False) -> dict[str, dict[str, str]]:
     out: dict[str, dict[str, str]] = {}
+    if not include_disabled and config_logins_disabled():
+        return out
     items = [{"user": CONFIG.get("admin_user"), "key": CONFIG.get("admin_key"), "role": "admin"}]
     items += list(CONFIG.get("admins") or [])
     for a in items:
@@ -584,8 +614,9 @@ def staff_account(user: str) -> dict[str, str] | None:
     if user in cfg:
         return cfg[user]
     with db() as con:
-        row = con.execute("SELECT username, password_hash, role FROM staff_users WHERE username=?", (user,)).fetchone()
-    return {"user": row["username"], "key": row["password_hash"], "role": row["role"], "source": "equipe"} if row else None
+        row = con.execute("SELECT username, password_hash, role, email FROM staff_users WHERE username=?", (user,)).fetchone()
+    return ({"user": row["username"], "key": row["password_hash"], "role": row["role"], "email": row["email"],
+             "source": "equipe"} if row else None)
 
 
 def staff_totp_row(user: str) -> dict[str, Any] | None:
@@ -650,7 +681,7 @@ def staff_from_request(request: Request, token: str | None, user: str | None, ke
         if not account:
             raise HTTPException(401, "Sua sessão do Admin expirou. Entre de novo.")
         return {"user": account["user"], "role": account["role"], "token": token}
-    if not config_staff():
+    if not config_staff(include_disabled=True) and db_admin_count() == 0:
         raise HTTPException(500, "admin_key ainda não foi trocada em config.json. Configure antes de usar o Admin.")
     user, key = user or "", key or ""
     if not user and not key:
@@ -683,6 +714,24 @@ def require_admin(
     """Protege as rotas do Admin. Sem isso, qualquer visitante veria os
     pedidos com dados de clientes ou liberaria pedido como pago sem pagar.
     Só o papel "admin"; a produção usa require_staff."""
+    staff = require_admin_setup(request, x_admin_token, x_admin_key, x_admin_user)
+    if admin_2fa_required() and not staff_has_2fa(staff["user"]):
+        raise HTTPException(403, "Ligue a verificação em duas etapas (aba Segurança) para usar o Admin.")
+    return staff
+
+
+def admin_2fa_required() -> bool:
+    return bool(CONFIG.get("admin_2fa_required", True))
+
+
+def require_admin_setup(
+    request: Request,
+    x_admin_token: str | None = Header(None),
+    x_admin_key: str | None = Header(None),
+    x_admin_user: str | None = Header(None),
+) -> dict[str, Any]:
+    """Papel admin, mesmo sem o 2FA ligado ainda: só pra aba Segurança
+    (ligar o 2FA, cuidar da equipe e dos logins do config.json)."""
     staff = staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
     if staff["role"] != "admin":
         raise HTTPException(403, "Seu usuário não tem acesso a essa parte do Admin.")
@@ -3004,7 +3053,9 @@ def staff_logout(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, An
 @app.get("/api/admin/me")
 def staff_me(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
     return {"user": staff["user"], "role": staff["role"], "role_name": ROLES[staff["role"]],
-            "two_factor": staff_has_2fa(staff["user"])}
+            "two_factor": staff_has_2fa(staff["user"]),
+            "two_factor_required": staff["role"] == "admin" and admin_2fa_required(),
+            "from_config": staff["user"] in config_staff()}
 
 
 class TwoFactorCode(BaseModel):
@@ -3056,55 +3107,93 @@ def staff_2fa_disable(payload: TwoFactorCode, request: Request, staff: dict[str,
     return {"ok": True}
 
 
-@app.get("/api/admin/staff", dependencies=[Depends(require_admin)])
-def staff_list() -> list[dict[str, Any]]:
+EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+@app.get("/api/admin/staff", dependencies=[Depends(require_admin_setup)])
+def staff_list() -> dict[str, Any]:
     with db() as con:
-        rows = [dict(r) for r in con.execute("SELECT username, role, created_at, created_by FROM staff_users").fetchall()]
+        rows = [dict(r) for r in con.execute("SELECT username, role, email, created_at, created_by FROM staff_users").fetchall()]
         twofa = {r["username"] for r in con.execute("SELECT username FROM staff_totp WHERE enabled=1").fetchall()}
-    out = [{"user": a["user"], "role": a["role"], "source": "config", "created_at": None, "created_by": ""}
-           for a in config_staff().values()]
-    out += [{"user": r["username"], "role": r["role"], "source": "equipe", "created_at": r["created_at"],
-             "created_by": r["created_by"]} for r in rows if r["username"] not in config_staff()]
+    active_cfg = config_staff()
+    all_cfg = config_staff(include_disabled=True)
+    out = [{"user": a["user"], "role": a["role"], "email": "", "source": "config", "created_at": None,
+            "created_by": "", "active": a["user"] in active_cfg} for a in all_cfg.values()]
+    out += [{"user": r["username"], "role": r["role"], "email": r["email"], "source": "equipe",
+             "created_at": r["created_at"], "created_by": r["created_by"], "active": True}
+            for r in rows if r["username"] not in all_cfg]
     for item in out:
         item["two_factor"] = item["user"] in twofa
         item["role_name"] = ROLES.get(item["role"], item["role"])
-    return out
+    return {"staff": out, "config_logins": len(all_cfg), "config_logins_disabled": config_logins_disabled(),
+            "db_admins": db_admin_count(), "email_ready": bool(mail_provider())}
 
 
 class StaffCreate(BaseModel):
     user: str
     password: str
     role: str
+    email: str = ""
 
 
 @app.post("/api/admin/staff")
-def staff_create(payload: StaffCreate, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
-    user = payload.user.strip()
+def staff_create(payload: StaffCreate, staff: dict[str, Any] = Depends(require_admin_setup)) -> dict[str, Any]:
+    user, email = payload.user.strip(), payload.email.strip().lower()
     if not re.fullmatch(r"[A-Za-z0-9._-]{3,40}", user):
         raise HTTPException(400, "Usuário com 3 a 40 letras, números, ponto, traço ou sublinhado.")
     if payload.role not in ROLES:
         raise HTTPException(400, "Papel inválido.")
     if len(payload.password) < 12:
         raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
-    if staff_account(user):
+    if email and not EMAIL_RE.fullmatch(email):
+        raise HTTPException(400, "E-mail inválido.")
+    if payload.role == "admin" and not email:
+        raise HTTPException(400, "Admin precisa de e-mail (é por ele que a senha é recuperada).")
+    if staff_account(user) or user in config_staff(include_disabled=True):
         raise HTTPException(400, "Já existe um usuário com esse nome.")
     with db() as con:
-        con.execute("INSERT INTO staff_users (username, password_hash, role, created_at, created_by) VALUES(?,?,?,?,?)",
-                    (user, hash_password(payload.password), payload.role, time.time(), staff["user"]))
+        if email and con.execute("SELECT 1 FROM staff_users WHERE email=?", (email,)).fetchone():
+            raise HTTPException(400, "Esse e-mail já é de outro usuário da equipe.")
+        con.execute("INSERT INTO staff_users (username, password_hash, role, email, created_at, created_by) VALUES(?,?,?,?,?,?)",
+                    (user, hash_password(payload.password), payload.role, email, time.time(), staff["user"]))
     return {"ok": True}
 
 
 @app.delete("/api/admin/staff/{user}")
-def staff_delete(user: str, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
-    if user in config_staff():
-        raise HTTPException(400, "Esse usuário vem do config.json; remova por lá.")
+def staff_delete(user: str, staff: dict[str, Any] = Depends(require_admin_setup)) -> dict[str, Any]:
+    if user in config_staff(include_disabled=True):
+        raise HTTPException(400, "Esse usuário vem do config.json: desligue os logins do config.json.")
     if user == staff["user"]:
         raise HTTPException(400, "Você não pode remover o próprio usuário.")
     with db() as con:
+        row = con.execute("SELECT role FROM staff_users WHERE username=?", (user,)).fetchone()
+        if row and row["role"] == "admin" and config_logins_disabled() and db_admin_count() <= 1:
+            raise HTTPException(400, "É o último admin: crie outro antes de remover.")
         con.execute("DELETE FROM staff_users WHERE username=?", (user,))
         con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
         con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
     return {"ok": True}
+
+
+class ConfigLogins(BaseModel):
+    disabled: bool
+
+
+@app.put("/api/admin/config-logins")
+def staff_config_logins(payload: ConfigLogins, staff: dict[str, Any] = Depends(require_admin_setup)) -> dict[str, Any]:
+    """Desliga (ou religa) os logins do config.json. Só um admin criado no
+    Admin, com 2FA, pode desligar: assim ninguém se tranca fora."""
+    if payload.disabled:
+        if staff["user"] in config_staff():
+            raise HTTPException(400, "Entre com um admin criado no Admin (não do config.json) para desligar esses logins.")
+        if not staff_has_2fa(staff["user"]):
+            raise HTTPException(400, "Ligue o 2FA no seu usuário antes de desligar os logins do config.json.")
+    set_setting("config_logins_disabled", "1" if payload.disabled else "0")
+    if payload.disabled:
+        with db() as con:
+            for user in config_staff(include_disabled=True):
+                con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    return {"ok": True, "disabled": config_logins_disabled()}
 
 
 @app.delete("/api/admin/staff/{user}/2fa")
@@ -3454,6 +3543,176 @@ def mercadopago_webhook(request: Request, payload: dict[str, Any] | None = None)
     return {"ok": True, "paid": apply_mp_payment(payment)}
 
 
+# ---------- E-mail e recuperação de senha ----------
+# O Render grátis bloqueia SMTP: o e-mail sai pela API HTTP do Resend
+# (RESEND_API_KEY) ou do Brevo (BREVO_API_KEY). MAIL_FROM é o remetente,
+# ex.: "Ripfire Studio <nao-responda@ripfire.com.br>".
+RESET_SECONDS = 30 * 60
+
+
+def mail_provider() -> str:
+    if os.getenv("RESEND_API_KEY", "").strip():
+        return "resend"
+    if os.getenv("BREVO_API_KEY", "").strip():
+        return "brevo"
+    return ""
+
+
+def mail_from() -> tuple[str, str]:
+    raw = os.getenv("MAIL_FROM", "").strip() or f"{CONFIG.get('store_name') or 'Ripfire Studio'} <nao-responda@ripfire.com.br>"
+    m = re.fullmatch(r"\s*(.*?)\s*<([^>]+)>\s*", raw)
+    return (m.group(1), m.group(2)) if m else ("", raw)
+
+
+def send_email(to: str, subject: str, text: str, html: str):
+    """Manda o e-mail (numa thread: a resposta da rota não espera, e o tempo
+    não entrega se a conta existe). Falha só vai pro log."""
+    provider = mail_provider()
+    name, address = mail_from()
+
+    def run():
+        try:
+            if provider == "resend":
+                req = urllib.request.Request(
+                    "https://api.resend.com/emails", method="POST",
+                    data=json.dumps({"from": f"{name} <{address}>" if name else address, "to": [to],
+                                     "subject": subject, "text": text, "html": html}).encode(),
+                    headers={"Authorization": f"Bearer {os.getenv('RESEND_API_KEY', '').strip()}",
+                             "Content-Type": "application/json", "User-Agent": "ripfire-studio"})
+            else:
+                req = urllib.request.Request(
+                    "https://api.brevo.com/v3/smtp/email", method="POST",
+                    data=json.dumps({"sender": {"name": name or address, "email": address}, "to": [{"email": to}],
+                                     "subject": subject, "textContent": text, "htmlContent": html}).encode(),
+                    headers={"api-key": os.getenv("BREVO_API_KEY", "").strip(), "Content-Type": "application/json",
+                             "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                r.read()
+        except Exception as exc:  # noqa: BLE001
+            detail = exc.read()[:300] if isinstance(exc, urllib.error.HTTPError) else exc
+            print(f"[email] falhou ({provider}) para {to[:3]}***: {detail}")
+
+    if provider:
+        threading.Thread(target=run, daemon=True).start()
+
+
+def reset_email(link: str, name: str, admin: bool) -> tuple[str, str, str]:
+    store = str(CONFIG.get("store_name") or "Ripfire Studio")
+    what = "do Admin da " + store if admin else "da sua conta na " + store
+    subject = f"Redefinir senha {what}"
+    text = (f"Olá{', ' + name if name else ''}!\n\nRecebemos um pedido para redefinir a senha {what}.\n"
+            f"Para criar uma senha nova, abra o link abaixo (vale por 30 minutos e uma vez só):\n\n{link}\n\n"
+            "Se não foi você, ignore este e-mail: sua senha continua a mesma.\n")
+    safe_link = link.replace("&", "&amp;").replace('"', "&quot;")
+    html = (f"<div style='font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#222'>"
+            f"<h2 style='margin:0 0 12px'>{store}</h2><p>Olá{', ' + name.replace('<', '') if name else ''}!</p>"
+            f"<p>Recebemos um pedido para redefinir a senha {what}.</p>"
+            f"<p><a href=\"{safe_link}\" style='display:inline-block;background:#9b59b6;color:#fff;padding:12px 20px;"
+            f"border-radius:8px;text-decoration:none;font-weight:bold'>Criar senha nova</a></p>"
+            f"<p style='font-size:13px;color:#666'>O link vale por 30 minutos e uma vez só. Se não foi você, "
+            f"ignore este e-mail: sua senha continua a mesma.</p></div>")
+    return subject, text, html
+
+
+def reset_base(request: Request) -> str:
+    return site_url() or str(request.base_url).rstrip("/")
+
+
+def new_reset_token(kind: str, subject: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with db() as con:
+        con.execute("DELETE FROM password_resets WHERE created_at < ?", (now - 86400,))
+        con.execute("UPDATE password_resets SET used=1 WHERE kind=? AND subject=?", (kind, subject))
+        con.execute("INSERT INTO password_resets (token_hash, kind, subject, created_at, used) VALUES(?,?,?,?,0)",
+                    (hashlib.sha256(token.encode()).hexdigest(), kind, subject, now))
+    return token
+
+
+def take_reset_token(token: str, kind: str) -> str:
+    """Confere e queima o token. Devolve o id do cliente / usuário da equipe."""
+    th = hashlib.sha256((token or "").encode()).hexdigest()
+    with db() as con:
+        row = con.execute("SELECT * FROM password_resets WHERE token_hash=? AND kind=?", (th, kind)).fetchone()
+        if not row or row["used"] or time.time() - row["created_at"] > RESET_SECONDS:
+            raise HTTPException(400, "Esse link de redefinição expirou ou já foi usado. Peça um novo.")
+        con.execute("UPDATE password_resets SET used=1 WHERE token_hash=?", (th,))
+    return row["subject"]
+
+
+FORGOT_MESSAGE = "Se houver uma conta com esses dados, enviamos um link para o e-mail cadastrado. Confira também o spam."
+
+
+class ForgotRequest(BaseModel):
+    email: str = ""
+    user: str = ""
+
+
+class ResetRequest(BaseModel):
+    token: str
+    password: str
+
+
+@app.post("/api/auth/forgot")
+def customer_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
+    if not mail_provider():
+        raise HTTPException(503, "A recuperação por e-mail ainda não está configurada. Fale com a loja pelo WhatsApp.")
+    email = payload.email.strip().lower()
+    check_rate_limit(f"forgot-ip:{client_ip(request)}", 10, 3600, "Muitos pedidos em pouco tempo. Tente mais tarde.")
+    check_rate_limit(f"forgot-email:{email[:200]}", 3, 3600, "Já enviamos alguns links para esse e-mail. Aguarde um pouco.")
+    with db() as con:
+        row = con.execute("SELECT id, full_name, email FROM customers WHERE email=?", (email,)).fetchone()
+    if row:
+        link = f"{reset_base(request)}/?redefinir={new_reset_token('customer', row['id'])}"
+        send_email(row["email"], *reset_email(link, str(row["full_name"]).split(" ")[0], admin=False))
+    return {"ok": True, "message": FORGOT_MESSAGE}
+
+
+@app.post("/api/auth/reset")
+def customer_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
+    check_rate_limit(f"reset-ip:{client_ip(request)}", 20, 3600, "Muitas tentativas. Tente mais tarde.")
+    check_new_password(payload.password)
+    customer_id = take_reset_token(payload.token, "customer")
+    with db() as con:
+        con.execute("UPDATE customers SET password_hash=? WHERE id=?", (hash_password(payload.password), customer_id))
+        con.execute("DELETE FROM customer_sessions WHERE customer_id=?", (customer_id,))
+        row = con.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
+    if not row:
+        raise HTTPException(400, "Conta não encontrada.")
+    login_ok([f"login-email:{row['email'][:200]}"])
+    return new_session(dict(row))
+
+
+@app.post("/api/admin/forgot")
+def staff_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
+    if not mail_provider():
+        raise HTTPException(503, "A recuperação por e-mail ainda não está configurada.")
+    who = (payload.user or payload.email).strip()
+    check_rate_limit(f"forgot-ip:{client_ip(request)}", 10, 3600, "Muitos pedidos em pouco tempo. Tente mais tarde.")
+    check_rate_limit(f"forgot-staff:{who.lower()[:100]}", 3, 3600, "Já enviamos alguns links. Aguarde um pouco.")
+    with db() as con:
+        row = con.execute("SELECT username, email FROM staff_users WHERE (username=? OR lower(email)=?) AND email!=''",
+                          (who, who.lower())).fetchone()
+    if row:
+        link = f"{reset_base(request)}/?redefinir-admin={new_reset_token('staff', row['username'])}"
+        send_email(row["email"], *reset_email(link, row["username"], admin=True))
+    return {"ok": True, "message": FORGOT_MESSAGE}
+
+
+@app.post("/api/admin/reset")
+def staff_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
+    """Troca a senha da equipe. O 2FA continua: só o e-mail não basta para entrar."""
+    check_rate_limit(f"reset-ip:{client_ip(request)}", 20, 3600, "Muitas tentativas. Tente mais tarde.")
+    if len(payload.password) < 12:
+        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    user = take_reset_token(payload.token, "staff")
+    with db() as con:
+        con.execute("UPDATE staff_users SET password_hash=? WHERE username=?", (hash_password(payload.password), user))
+        con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    login_ok([f"admin-user:{user.lower()[:100]}"])
+    return {"ok": True, "user": user, "two_factor": staff_has_2fa(user)}
+
+
 def plaintext_admin_users() -> list[str]:
     logins = [(CONFIG.get("admin_user"), CONFIG.get("admin_key"))]
     logins += [(a.get("user"), a.get("key")) for a in CONFIG.get("admins") or []]
@@ -3473,13 +3732,14 @@ PUBLIC_ROUTES = {
     ("GET", "/api/library/categories/{category_id}/arts"), ("GET", "/api/library/arts/{art_id}/thumb"),
     ("GET", "/media/{file_path:path}"),
     # Entrar, criar conta e sair (com limite de tentativas)
-    ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/admin/login"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/login"), ("POST", "/api/auth/register"), ("POST", "/api/admin/login"),
+    ("POST", "/api/auth/forgot"), ("POST", "/api/auth/reset"), ("POST", "/api/admin/forgot"), ("POST", "/api/admin/reset"), ("POST", "/api/auth/google"), ("POST", "/api/auth/logout"),
     # Pagamentos: conferidos pelo segredo do webhook ou consultando a API do Mercado Pago
     ("POST", "/api/payments/webhook"), ("POST", "/api/payments/mercadopago"),
     # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
     ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
 }
-AUTH_DEPENDENCIES = {"require_admin", "require_staff", "require_customer"}
+AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_customer"}
 
 
 def unprotected_routes() -> list[str]:

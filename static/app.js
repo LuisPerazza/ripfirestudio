@@ -262,6 +262,8 @@ function switchAuthTab(tabName){
   $$('.auth-tab').forEach(b=>b.classList.toggle('active', b.dataset.authtab===tabName));
   $('#authLoginForm').hidden = tabName!=='login';
   $('#authRegisterForm').hidden = tabName!=='register';
+  $('#authForgotForm').hidden = true;
+  $('#authGuest').classList.remove('forgot-mode');
   $('#authTitle').textContent = tabName==='login' ? 'Bem-vindo de volta' : 'Crie sua conta';
   $('#authSubtitle').textContent = tabName==='login' ? 'Entre para baixar artes e finalizar seus pedidos.' : 'Leva menos de um minuto e já libera as artes grátis.';
   $('#authStatus').textContent=''; $('#authStatus').className='';
@@ -301,6 +303,67 @@ function bindMaskedInput(el,formatter){
   el.addEventListener('input',()=>{ el.value=formatter(el.value); });
   // Não manda só o "+55" do foco quando a pessoa não digitou nada.
   el.addEventListener('blur',()=>{ if(el.value===formatter('')) el.value=''; });
+}
+function showForgot(){
+  $('#authLoginForm').hidden=true; $('#authForgotForm').hidden=false;
+  $('#authGuest').classList.add('forgot-mode');
+  $('#authTitle').textContent='Esqueceu a senha?';
+  $('#authSubtitle').textContent='Sem problema: a gente manda um link para o seu e-mail.';
+  $('#forgotEmail').value=$('#loginEmail').value; $('#authStatus').textContent=''; $('#forgotEmail').focus();
+}
+async function submitForgot(){
+  const email=$('#forgotEmail').value.trim();
+  if(!email) return stat('#authStatus','Digite o seu e-mail.',false);
+  const btn=$('#forgotSubmitBtn'); btn.disabled=true;
+  try{
+    const r=await fetch('/api/auth/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail||'Não foi possível enviar agora.');
+    stat('#authStatus',d.message,true);
+  }catch(e){ stat('#authStatus',e.message,false); }
+  finally{ btn.disabled=false; }
+}
+/* Link do e-mail: /?redefinir=TOKEN (cliente) ou /?redefinir-admin=TOKEN (equipe). */
+let resetCtx=null;
+function openResetFromUrl(){
+  const q=new URLSearchParams(location.search), t=q.get('redefinir'), ta=q.get('redefinir-admin');
+  if(!t&&!ta) return;
+  history.replaceState(null,'',location.pathname+location.hash); // o token não fica no histórico
+  resetCtx={token:t||ta, admin:!!ta};
+  $('#resetTitle').textContent=resetCtx.admin?'Senha nova do Admin':'Criar senha nova';
+  $('#resetHint').textContent=resetCtx.admin?'Use pelo menos 12 caracteres. Depois entre com a senha nova e o código do app autenticador.':'Use pelo menos 8 caracteres.';
+  $('#resetPass1').value=''; $('#resetPass2').value=''; $('#resetStatus').textContent='';
+  $('#resetModal').showModal(); $('#resetPass1').focus();
+}
+async function submitReset(){
+  const p1=$('#resetPass1').value, p2=$('#resetPass2').value;
+  if(!p1) return stat('#resetStatus','Digite a senha nova.',false);
+  if(p1!==p2) return stat('#resetStatus','As duas senhas não são iguais.',false);
+  const btn=$('#resetSubmitBtn'); btn.disabled=true;
+  try{
+    const r=await fetch(resetCtx.admin?'/api/admin/reset':'/api/auth/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:resetCtx.token,password:p1})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail||'Não foi possível salvar.');
+    if(resetCtx.admin){
+      stat('#resetStatus','Senha alterada! Entre no Admin com a senha nova.',true);
+      setTimeout(()=>{ $('#resetModal').close(); location.hash='#admin'; openAdminLogin(); $('#adminUser').value=d.user||''; },1200);
+    }else{
+      currentCustomer=d; saveCustomerToStorage(); renderAccountBoxes();
+      stat('#resetStatus','Senha alterada! Você já está logado.',true);
+      setTimeout(()=>$('#resetModal').close(),1200);
+    }
+  }catch(e){ stat('#resetStatus',e.message,false); }
+  finally{ btn.disabled=false; }
+}
+async function submitAdminForgot(){
+  const who=$('#adminUser').value.trim();
+  if(!who) return stat('#adminLoginStatus','Digite o seu usuário ou e-mail no primeiro campo.',false);
+  try{
+    const r=await fetch('/api/admin/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:who})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail||'Não foi possível enviar agora.');
+    stat('#adminLoginStatus',d.message,true);
+  }catch(e){ stat('#adminLoginStatus',e.message,false); }
 }
 async function submitLogin(){
   const email=$('#loginEmail').value.trim(), password=$('#loginPassword').value;
@@ -361,6 +424,7 @@ async function init(){
   window.addEventListener('hashchange',openAdminFromHash);
   restoreAdminSession();
   openAdminFromHash();
+  openResetFromUrl();
   handlePaymentReturn();  // volta do Mercado Pago (?mp=retorno)
 }
 function fillConfig(){
@@ -407,6 +471,10 @@ function bind(){
   // form, que é o × de fechar: o modal sumia em vez de entrar/cadastrar.
   const onEnter=(sels,fn)=>sels.forEach(s=>$(s).addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();fn()}}));
   onEnter(['#loginEmail','#loginPassword'],submitLogin);
+  $('#forgotLink').onclick=showForgot; $('#forgotBack').onclick=()=>switchAuthTab('login');
+  $('#forgotSubmitBtn').onclick=submitForgot; onEnter(['#forgotEmail'],submitForgot);
+  $('#resetSubmitBtn').onclick=submitReset; onEnter(['#resetPass1','#resetPass2'],submitReset);
+  $('#adminForgotLink').onclick=submitAdminForgot;
   onEnter(['#regName','#regEmail','#regPassword','#regPhone','#regCep','#regNumber','#regDocument'],submitRegister);
   onEnter(['#adminUser','#adminPassword','#adminCode'],submitAdminLogin);
   $('#saleType').onchange=()=>{toggleSale();updatePrice()};$('#shirtColor').onchange=updateShirtVisual;$('#sizeGrid').oninput=updatePrice;
@@ -1890,9 +1958,13 @@ function admShow(pane){
     mockups:renderMockupsList,more:()=>{loadLgpdRequests();loadBackups()},security:loadSecurity}[pane]||(()=>{}))();
 }
 const STAFF_PANES={producao:['orders','security']};
-function enterAdmin(){
+async function enterAdmin(){
   if(!adminKey){ openAdminLogin(); return; }
-  const allowed=STAFF_PANES[adminRole];
+  let me=null;
+  try{ me=await admFetch('/api/admin/me'); }catch(e){ return; }
+  ADM.mustSetup2fa=!!(me.two_factor_required&&!me.two_factor);
+  const allowed=ADM.mustSetup2fa?['security']:STAFF_PANES[adminRole];
+  if(ADM.mustSetup2fa) ADM.pane='security';
   $('#admWho').textContent=`Logado como ${adminUser} · ${adminRole==='producao'?'Produção':'Admin'}`;
   $$('[data-adm]').forEach(b=>b.hidden=!!allowed&&!allowed.includes(b.dataset.adm));
   if(allowed&&!allowed.includes(ADM.pane)) ADM.pane='orders';
@@ -2210,6 +2282,9 @@ async function loadSecurity(){
     $('#tfaStart').onclick=startTwoFactor;
   }
   $('#staffCard').hidden=me.role!=='admin';
+  $('#tfaRequired')?.remove();
+  if(me.two_factor_required&&!me.two_factor)
+    $('#tfaBody').insertAdjacentHTML('beforebegin','<div id="tfaRequired" class="adm-hint"><b>Ligue a verificação em duas etapas para liberar o Admin.</b> Até lá só esta aba fica disponível.</div>');
   if(me.role==='admin') loadStaff();
 }
 async function startTwoFactor(){
@@ -2228,17 +2303,32 @@ async function startTwoFactor(){
     $('#tfaCode').focus();
     $('#tfaConfirm').onsubmit=async ev=>{ev.preventDefault();
       try{ await admFetch('/api/admin/2fa/enable',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('#tfaCode').value})});
-        await loadSecurity(); stat('#tfaStatus','Pronto! A partir de agora o login do Admin pede o código do app.',true); }
+        stat('#tfaStatus','Pronto! A partir de agora o login do Admin pede o código do app.',true);
+        if(ADM.mustSetup2fa){ ADM.pane='dash'; await enterAdmin(); } else await loadSecurity(); }
       catch(e){ stat('#tfaStatus',e.message,false); } };
   }catch(e){ stat('#tfaStatus',e.message,false); }
 }
 async function loadStaff(){
-  let list=[];
-  try{ list=await admFetch('/api/admin/staff'); }catch(e){ return stat('#staffStatus',e.message,false); }
-  $('#staffTable').innerHTML=`<table class="adm-table"><thead><tr><th>Usuário</th><th>Papel</th><th>2FA</th><th>Origem</th><th></th></tr></thead><tbody>
-    ${list.map(u=>`<tr><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.role_name)}</td>
+  let info;
+  try{ info=await admFetch('/api/admin/staff'); }catch(e){ return stat('#staffStatus',e.message,false); }
+  const list=info.staff, box=$('#configLoginsBox');
+  box.hidden=!info.config_logins;
+  if(info.config_logins){
+    box.innerHTML=info.config_logins_disabled
+      ?`<b>Logins do config.json desligados.</b> Só entram os usuários criados aqui. <button type="button" class="adm-btn sm" data-cfglogins="0">Religar</button>`
+      :`<b>${info.config_logins} login(s) do config.json ativo(s)</b> (sem e-mail, sem recuperação de senha). Crie seus admins aqui com e-mail, entre com um deles, ligue o 2FA e então
+         <button type="button" class="adm-btn sm danger" data-cfglogins="1">Desligar logins do config.json</button>`;
+    box.querySelector('[data-cfglogins]').onclick=async ev=>{
+      const off=ev.target.dataset.cfglogins==='1';
+      if(off&&!confirm('Desligar os logins do config.json? Depois disso só entram os usuários criados aqui.')) return;
+      try{ await admFetch('/api/admin/config-logins',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({disabled:off})}); loadStaff(); }
+      catch(e){ stat('#staffStatus',e.message,false); }
+    };
+  }
+  $('#staffTable').innerHTML=`${info.email_ready?'':'<p class="adm-note"><b>Atenção:</b> o envio de e-mail (recuperar senha) ainda não está configurado no servidor.</p>'}<table class="adm-table"><thead><tr><th>Usuário</th><th>E-mail</th><th>Papel</th><th>2FA</th><th>Origem</th><th></th></tr></thead><tbody>
+    ${list.map(u=>`<tr${u.active?'':' class="off"'}><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.email||'–')}</td><td>${esc(u.role_name)}</td>
       <td>${u.two_factor?'<span class="pos">Ligado</span>':'<span class="neg">Desligado</span>'}</td>
-      <td>${u.source==='config'?'config.json':'Criado no Admin'}</td>
+      <td>${u.source==='config'?(u.active?'config.json':'config.json (desligado)'):'Criado no Admin'}</td>
       <td class="adm-actions">${u.two_factor&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
         ${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
     </tbody></table>`;
@@ -2251,7 +2341,7 @@ async function addStaff(ev){
   ev.preventDefault();
   try{
     await admFetch('/api/admin/staff',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({user:$('#staffUser').value.trim(),password:$('#staffPass').value,role:$('#staffRole').value})});
+      body:JSON.stringify({user:$('#staffUser').value.trim(),email:$('#staffEmail').value.trim(),password:$('#staffPass').value,role:$('#staffRole').value})});
     $('#staffForm').reset(); stat('#staffStatus','Usuário criado.',true); loadStaff();
   }catch(e){ stat('#staffStatus',e.message,false); }
 }

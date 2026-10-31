@@ -256,6 +256,16 @@ CREATE TABLE IF NOT EXISTS staff_sessions (
     created_at DOUBLE PRECISION NOT NULL
 );
 
+ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0
+);
+
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT '';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS stage_at DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS stage_by TEXT NOT NULL DEFAULT '';
@@ -272,7 +282,7 @@ CREATE TABLE IF NOT EXISTS digital_downloads (
 PG_TABLES = (
     "artworks", "orders", "shirt_mockups", "customers", "customer_sessions",
     "library_categories", "library_arts", "page_hits", "privacy_requests", "digital_downloads", "settings",
-    "staff_users", "staff_totp", "staff_sessions",
+    "staff_users", "staff_totp", "staff_sessions", "password_resets",
 )
 
 
