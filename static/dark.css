@@ -431,7 +431,5 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 /* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
 html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
 html[data-theme="dark"] .lib-apply:hover,html[data-theme="dark"] .lib-dl:hover{background:#ece1f2}
-/* Menu do topo: no escuro a sombra do botão que sobe é um brilho branco. */
-html[data-theme="dark"] .topbar .nav-btn:hover,html[data-theme="dark"] .topbar .nav-btn:focus-visible,html[data-theme="dark"] .topbar .nav-btn:active,
-html[data-theme="dark"] .topbar .nav-account:hover,html[data-theme="dark"] .topbar .nav-account:focus-visible,html[data-theme="dark"] .topbar .nav-account:active,
-html[data-theme="dark"] .topbar .theme-toggle:hover{box-shadow:0 8px 22px rgba(255,255,255,.3)}
+/* Sol/lua: no escuro, ao subir, ganha brilho branco (os botões do menu ficam no styles.css). */
+html[data-theme="dark"] .topbar .theme-toggle:hover{box-shadow:0 10px 30px rgba(255,255,255,.55)}
