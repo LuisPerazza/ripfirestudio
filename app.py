@@ -320,6 +320,9 @@ def init_db():
             # Etapa da produção que o Admin acompanha (ver ORDER_STAGES).
             con.execute("ALTER TABLE orders ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
             con.execute("ALTER TABLE orders ADD COLUMN stage_at REAL NOT NULL DEFAULT 0")
+        if "stage_by" not in cols:
+            # Quem da equipe mudou a etapa por último (o operador que pegou o pedido).
+            con.execute("ALTER TABLE orders ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''")
         con.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         con.execute("""CREATE TABLE IF NOT EXISTS staff_users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL,
                        role TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL DEFAULT '')""")
@@ -2902,7 +2905,7 @@ def list_orders() -> list[dict[str, Any]]:
         rows = con.execute(
             """SELECT id,order_number,created_at,customer_name,customer_email,customer_whatsapp,
                       sale_type,status,payment_status,total,folder_path,production_drop_path,
-                      data_json,stage,stage_at,payment_ref
+                      data_json,stage,stage_at,stage_by,payment_ref
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
 
@@ -3122,7 +3125,7 @@ def security_ip(request: Request) -> dict[str, Any]:
 
 
 @app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_staff)])
-def set_order_stage(order_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def set_order_stage(order_id: str, payload: dict[str, Any], staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
     stage = str(payload.get("stage") or "").upper()
     if stage not in ORDER_STAGES:
         raise HTTPException(400, "Etapa inválida.")
@@ -3135,13 +3138,13 @@ def set_order_stage(order_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(400, "Pedido ainda não está pago.")
     with db() as con:
         con.execute(
-            """UPDATE orders SET stage=?, stage_at=?,
+            """UPDATE orders SET stage=?, stage_at=?, stage_by=?,
                status=CASE WHEN ? IN ('FINALIZADO','ENVIADO') THEN 'PRONTO'
                            WHEN status='PRONTO' THEN 'LIBERADO_PRODUCAO' ELSE status END
                WHERE id=?""",
-            (stage, time.time(), stage, order_id)
+            (stage, time.time(), staff["user"], stage, order_id)
         )
-    return {"ok": True, "stage": stage}
+    return {"ok": True, "stage": stage, "stage_by": staff["user"]}
 
 
 # ---------- Custos (Admin) ----------

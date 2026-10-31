@@ -2034,15 +2034,15 @@ function renderOrders(){
         <td>${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}<small>${esc(orderLine(o))}</small></td>
         <td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
-          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}</td>
+          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
         <td class="adm-actions">${adminRole!=='producao'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
   $$('#ordersTable [data-stage]').forEach(sel=>sel.onchange=async()=>{
     sel.disabled=true;
-    try{ await admFetch(`/api/admin/orders/${sel.dataset.stage}/stage`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:sel.value})});
-      const o=ADM.orders.find(x=>x.id===sel.dataset.stage); o.stage=sel.value; if(['FINALIZADO','ENVIADO'].includes(sel.value)) o.status='PRONTO';
+    try{ const d=await admFetch(`/api/admin/orders/${sel.dataset.stage}/stage`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:sel.value})});
+      const o=ADM.orders.find(x=>x.id===sel.dataset.stage); o.stage=sel.value; o.stage_by=d.stage_by; o.stage_at=Date.now()/1000; if(['FINALIZADO','ENVIADO'].includes(sel.value)) o.status='PRONTO';
       renderOrders(); }
     catch(e){ alert(e.message); sel.disabled=false; }
   });
