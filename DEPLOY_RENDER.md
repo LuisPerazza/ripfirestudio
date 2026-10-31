@@ -181,6 +181,9 @@ lá um atalho do `sincronizar_producao.bat`.
   Segurança), obrigatória para o papel Admin. Papéis: Admin (tudo) e
   Produção (pedidos e arquivos). Admin é criado na aba Segurança, com e-mail;
   os logins do config.json podem ser desligados lá mesmo.
+- **Recuperar senha sem e-mail configurado**: o cliente pede pelo WhatsApp e o
+  Admin (aba Clientes) gera o link de nova senha e envia pelo WhatsApp dele.
+  Para a equipe, outro admin gera o link na aba Segurança.
 - **Recuperar senha** (cliente e Admin): link por e-mail, vale 30 min e uma
   vez só. O Render grátis bloqueia SMTP, então o e-mail sai pela API do
   Resend (`RESEND_API_KEY`) ou do Brevo (`BREVO_API_KEY`), com o remetente em

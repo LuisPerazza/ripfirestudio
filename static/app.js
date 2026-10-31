@@ -320,6 +320,10 @@ async function submitForgot(){
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.detail||'Não foi possível enviar agora.');
     stat('#authStatus',d.message,true);
+    if(d.by_whatsapp){
+      const wa=document.querySelector('.site-footer a[href*="wa.me"]');
+      if(wa) $('#authStatus').insertAdjacentHTML('beforeend',` <a href="${wa.href}" target="_blank" rel="noopener">Abrir WhatsApp da loja</a>`);
+    }
   }catch(e){ stat('#authStatus',e.message,false); }
   finally{ btn.disabled=false; }
 }
@@ -2147,14 +2151,34 @@ function renderCustomers(){
   const list=ADM.customers.filter(c=>!q||normTxt(`${c.full_name} ${c.email} ${c.phone}`).includes(q));
   const prem=ADM.customers.filter(c=>c.premium_until>now).length;
   $('#customersCount').textContent=`${plural(ADM.customers.length,'conta','contas')} · ${prem} premium ativo${prem===1?'':'s'}`;
-  $('#customersTable').innerHTML=list.length?`<table class="adm-table"><thead><tr><th>Cliente</th><th>Telefone</th><th>Conta criada</th><th>Premium</th><th>Pedidos</th><th>Total pago</th></tr></thead><tbody>
+  $('#customersTable').innerHTML=list.length?`<table class="adm-table"><thead><tr><th>Cliente</th><th>Telefone</th><th>Conta criada</th><th>Premium</th><th>Pedidos</th><th>Total pago</th><th></th></tr></thead><tbody>
     ${list.map(c=>{const wa=waLink(c.phone);return `<tr>
       <td><b>${esc(c.full_name)}</b><small>${esc(c.email)}${c.google?' · Google':''}</small></td>
       <td>${c.phone?`${esc(formatPhoneBR(c.phone))}${wa?`<small><a href="${wa}" target="_blank" rel="noopener">WhatsApp</a></small>`:''}`:'–'}</td>
       <td>${fmtDate(c.created_at)}</td>
       <td>${c.premium_until>now?`<span class="adm-pill st-PREMIUM">até ${fmtDate(c.premium_until)}</span>`:c.premium_until?'<small>vencido</small>':'–'}</td>
-      <td>${c.orders}</td><td>${money(c.spent)}</td></tr>`}).join('')}</tbody></table>`
+      <td>${c.orders}</td><td>${money(c.spent)}</td>
+      <td class="adm-actions"><button type="button" class="adm-btn sm" data-resetlink="${c.id}" title="Para quem esqueceu a senha: o link vai pelo seu WhatsApp">Link de nova senha</button></td></tr>`}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.customers.length?'Nenhum cliente encontrado.':'Nenhuma conta criada ainda.'}</p>`;
+  $$('#customersTable [data-resetlink]').forEach(b=>b.onclick=()=>{
+    const c=ADM.customers.find(x=>x.id===b.dataset.resetlink);
+    showResetLink(`/api/admin/customers/${encodeURIComponent(b.dataset.resetlink)}/reset-link`,c?c.full_name:'o cliente');
+  });
+}
+
+// Link de nova senha (cliente ou equipe) para mandar pelo WhatsApp do Admin.
+async function showResetLink(url,whoLabel){
+  let d;
+  try{ d=await admFetch(url,{method:'POST'}); }catch(e){ return alert(e.message); }
+  const msg=`Olá${d.name?', '+d.name.split(' ')[0]:''}! Aqui está o link para criar sua senha nova na Ripfire (vale ${d.minutes} minutos e uma vez só):\n${d.link}`;
+  $('#resetLinkHint').textContent=`Link para ${whoLabel}. Vale ${d.minutes} minutos e funciona uma vez só. Confira que é a pessoa certa antes de enviar.`;
+  $('#resetLinkText').value=d.link;
+  const wa=waLink(d.phone);
+  $('#resetLinkWa').href=wa?`${wa}?text=${encodeURIComponent(msg)}`:`https://wa.me/?text=${encodeURIComponent(msg)}`;
+  $('#resetLinkStatus').textContent='';
+  $('#resetLinkCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(msg); stat('#resetLinkStatus','Mensagem com o link copiada.',true); }
+    catch{ $('#resetLinkText').select(); stat('#resetLinkStatus','Selecione e copie o link (Ctrl+C).',false); } };
+  $('#resetLinkModal').showModal();
 }
 
 /* ---------- Custos ---------- */
@@ -2329,11 +2353,13 @@ async function loadStaff(){
     ${list.map(u=>`<tr${u.active?'':' class="off"'}><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.email||'–')}</td><td>${esc(u.role_name)}</td>
       <td>${u.two_factor?'<span class="pos">Ligado</span>':'<span class="neg">Desligado</span>'}</td>
       <td>${u.source==='config'?(u.active?'config.json':'config.json (desligado)'):'Criado no Admin'}</td>
-      <td class="adm-actions">${u.two_factor&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
+      <td class="adm-actions">${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-stafflink="${esc(u.user)}">Link de nova senha</button>`:''}
+        ${u.two_factor&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
         ${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
     </tbody></table>`;
   $$('[data-reset2fa]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Desligar o 2FA de ${b.dataset.reset2fa}? Use quando a pessoa perdeu o celular.`)) return;
     try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.reset2fa)}/2fa`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
+  $$('[data-stafflink]').forEach(b=>b.onclick=()=>showResetLink(`/api/admin/staff/${encodeURIComponent(b.dataset.stafflink)}/reset-link`,b.dataset.stafflink));
   $$('[data-delstaff]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Remover o usuário ${b.dataset.delstaff}?`)) return;
     try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.delstaff)}`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
 }

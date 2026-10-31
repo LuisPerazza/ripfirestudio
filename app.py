@@ -3656,7 +3656,9 @@ class ResetRequest(BaseModel):
 @app.post("/api/auth/forgot")
 def customer_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
     if not mail_provider():
-        raise HTTPException(503, "A recuperação por e-mail ainda não está configurada. Fale com a loja pelo WhatsApp.")
+        # Sem e-mail: a loja manda o link pelo WhatsApp (Admin > Clientes > Link de nova senha).
+        return {"ok": True, "by_whatsapp": True,
+                "message": "Fale com a loja pelo WhatsApp: enviamos para o número da sua conta um link para criar a senha nova."}
     email = payload.email.strip().lower()
     check_rate_limit(f"forgot-ip:{client_ip(request)}", 10, 3600, "Muitos pedidos em pouco tempo. Tente mais tarde.")
     check_rate_limit(f"forgot-email:{email[:200]}", 3, 3600, "Já enviamos alguns links para esse e-mail. Aguarde um pouco.")
@@ -3686,7 +3688,7 @@ def customer_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
 @app.post("/api/admin/forgot")
 def staff_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
     if not mail_provider():
-        raise HTTPException(503, "A recuperação por e-mail ainda não está configurada.")
+        return {"ok": True, "message": "Peça a outro admin um link de nova senha (Admin > Segurança > Equipe)."}
     who = (payload.user or payload.email).strip()
     check_rate_limit(f"forgot-ip:{client_ip(request)}", 10, 3600, "Muitos pedidos em pouco tempo. Tente mais tarde.")
     check_rate_limit(f"forgot-staff:{who.lower()[:100]}", 3, 3600, "Já enviamos alguns links. Aguarde um pouco.")
@@ -3711,6 +3713,30 @@ def staff_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
         con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
     login_ok([f"admin-user:{user.lower()[:100]}"])
     return {"ok": True, "user": user, "two_factor": staff_has_2fa(user)}
+
+
+@app.post("/api/admin/customers/{customer_id}/reset-link")
+def admin_customer_reset_link(customer_id: str, request: Request,
+                              staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Link de nova senha que o Admin manda pelo WhatsApp (sem e-mail configurado)."""
+    with db() as con:
+        row = con.execute("SELECT id, full_name, phone FROM customers WHERE id=?", (customer_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Cliente não encontrado.")
+    link = f"{reset_base(request)}/?redefinir={new_reset_token('customer', row['id'])}"
+    print(f"[senha] {staff['user']} gerou link de nova senha para o cliente {row['id']}")
+    return {"link": link, "minutes": RESET_SECONDS // 60, "name": row["full_name"], "phone": row["phone"]}
+
+
+@app.post("/api/admin/staff/{user}/reset-link")
+def admin_staff_reset_link(user: str, request: Request, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    if user == staff["user"]:
+        raise HTTPException(400, "Para a sua própria senha, use o Esqueci minha senha ou peça a outro admin.")
+    if user in config_staff(include_disabled=True) or not staff_account(user):
+        raise HTTPException(400, "Só para usuários criados no Admin.")
+    link = f"{reset_base(request)}/?redefinir-admin={new_reset_token('staff', user)}"
+    print(f"[senha] {staff['user']} gerou link de nova senha para {user}")
+    return {"link": link, "minutes": RESET_SECONDS // 60, "name": user, "phone": ""}
 
 
 def plaintext_admin_users() -> list[str]:

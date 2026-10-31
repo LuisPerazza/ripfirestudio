@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=53">
+  <link rel="stylesheet" href="/static/styles.css?v=54">
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -584,6 +584,20 @@
   </form>
 </dialog>
 
+<dialog id="resetLinkModal">
+  <form method="dialog" class="modal-card auth-card">
+    <button class="close" value="cancel" aria-label="Fechar">×</button>
+    <h2>Link de nova senha</h2>
+    <p class="auth-hint" id="resetLinkHint"></p>
+    <label class="sr-only" for="resetLinkText">Link</label><input id="resetLinkText" readonly>
+    <div class="reset-link-actions">
+      <button type="button" id="resetLinkCopy" class="btn-line">Copiar link</button>
+      <a id="resetLinkWa" class="primary" target="_blank" rel="noopener">Enviar no WhatsApp</a>
+    </div>
+    <div id="resetLinkStatus" role="status" aria-live="polite"></div>
+  </form>
+</dialog>
+
 <dialog id="resetModal">
   <form method="dialog" class="modal-card auth-card">
     <button class="close" value="cancel" aria-label="Fechar">×</button>
@@ -596,6 +610,6 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=60"></script>
+<script src="/static/app.js?v=61"></script>
 </body>
 </html>

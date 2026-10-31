@@ -680,3 +680,7 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 .adm-table tr.off td{opacity:.55}
 #configLoginsBox .adm-btn{margin-left:6px}
 #authGuest.forgot-mode .auth-tabs,#authGuest.forgot-mode #authGoogle{display:none}
+#resetLinkModal{width:min(480px,92vw)}
+#resetLinkText{width:100%;font-size:12.5px;margin:4px 0 12px}
+.reset-link-actions{display:flex;gap:8px;flex-wrap:wrap}
+.reset-link-actions>*{flex:1;text-align:center;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
