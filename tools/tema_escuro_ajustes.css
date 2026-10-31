@@ -1,0 +1,4 @@
+/* Ajustes à mão do tema escuro (o gerador cola isto no fim do dark.css). */
+/* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
+html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
+html[data-theme="dark"] .lib-apply:hover,html[data-theme="dark"] .lib-dl:hover{background:#ece1f2}
