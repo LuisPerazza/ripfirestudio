@@ -33,6 +33,11 @@ function tab(id){
   document.body.classList.toggle('is-editor',id==='editor');
   document.body.classList.toggle('is-digital',id==='digital');
   $('#navAccount').classList.toggle('current',id==='profile');
+  const wantHash=id==='admin'?'#admin':'';
+  if(location.hash!==wantHash && (id==='admin'||location.hash==='#admin')){
+    history.replaceState(null,'',location.pathname+location.search+wantHash);
+    syncAdminUi();
+  }
   if(id==='editor') positionPrintArea();
   if(id==='admin') enterAdmin();
   if(id==='profile'){ stat('#profileNotice','',true); loadProfile(); }
@@ -1387,7 +1392,8 @@ async function logoutAdmin(){
 // essas alças também só aparecem pro admin logado.
 function syncAdminUi(){
   const logged=!!adminKey;
-  $('.nav-btn[data-tab="admin"]').hidden=!logged && location.hash!=='#admin';
+  // O botão Admin só aparece em /#admin: no site normal ninguém vê, nem o admin logado.
+  $('.nav-btn[data-tab="admin"]').hidden=location.hash!=='#admin';
   $('#printAreaMove').hidden=!logged;
   $('#printAreaResize').hidden=!logged;
   renderLibrary(); // "Excluir arte" só aparece pro admin
