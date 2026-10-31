@@ -4,7 +4,6 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) body{background:var(--bg);color:var(--ink)}
 :where(html[data-theme="dark"]) .topbar{background:var(--dark);color:#fff}
 :where(html[data-theme="dark"]) .nav-btn{border:0;background:transparent;color:#aaa}
-:where(html[data-theme="dark"]) .nav-btn.active,:where(html[data-theme="dark"]) .nav-btn:hover{background:var(--accent);color:#fff}
 :where(html[data-theme="dark"]) body.is-home .topbar{background:transparent}
 :where(html[data-theme="dark"]) body.is-home .nav-btn{color:#fff}
 :where(html[data-theme="dark"]) body.is-editor{background-image:url(/static/img/editor-bg.png);background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
@@ -97,8 +96,6 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) .auth-divider{color:var(--muted)}
 :where(html[data-theme="dark"]) .auth-divider::before,:where(html[data-theme="dark"]) .auth-divider::after{background:var(--line)}
 :where(html[data-theme="dark"]) .nav-account{border:0;background:linear-gradient(135deg,#b57edc,var(--accent-dark));color:#fff;box-shadow:0 6px 18px rgba(155,89,182,.4)}
-:where(html[data-theme="dark"]) .nav-account:hover{box-shadow:0 8px 24px rgba(155,89,182,.55)}
-:where(html[data-theme="dark"]) .nav-account.current{box-shadow:0 0 0 3px rgba(255,255,255,.35),0 6px 18px rgba(155,89,182,.45)}
 :where(html[data-theme="dark"]) .nav-avatar{background:#1c1c1f;color:var(--accent)}
 :where(html[data-theme="dark"]) #authModal{box-shadow:0 30px 80px rgba(0,0,0,.45)}
 :where(html[data-theme="dark"]) #authModal::backdrop{background:rgba(5,5,5,.72)}
@@ -421,13 +418,15 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) .theme-toggle svg{fill:none;stroke:currentColor}
 :where(html[data-theme="dark"]) .theme-toggle .ico-sun circle{fill:currentColor;stroke:none}
 :where(html[data-theme="dark"])[data-theme="dark"] .theme-toggle .ico-moon{fill:currentColor;stroke:none}
-:where(html[data-theme="dark"]) .topbar .nav-btn{color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18)}
-:where(html[data-theme="dark"]) .topbar .nav-btn.active{background:linear-gradient(135deg,#b57edc,var(--accent-dark));border-color:transparent;box-shadow:0 6px 18px rgba(155,89,182,.4)}
 :where(html[data-theme="dark"]) .topbar .nav-account{border:1px solid transparent}
-:where(html[data-theme="dark"]) .topbar .nav-btn:hover,:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-btn:active,:where(html[data-theme="dark"]) .topbar .nav-account:hover,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:active{box-shadow:0 10px 22px rgba(0,0,0,.45)}
-:where(html[data-theme="dark"]) .topbar .nav-btn:hover:not(.active){background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.3)}
-:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible{outline:2px solid #1c1c1f}
 :where(html[data-theme="dark"]) .topbar .theme-toggle:hover{box-shadow:0 10px 22px rgba(0,0,0,.45)}
+:where(html[data-theme="dark"]) .topbar .nav-btn,:where(html[data-theme="dark"]) .topbar .nav-account{border:1px solid transparent;color:#fff;background:linear-gradient(135deg,#b57edc,var(--accent-dark));box-shadow:0 6px 18px rgba(155,89,182,.35)}
+:where(html[data-theme="dark"]) .topbar .nav-btn.active,:where(html[data-theme="dark"]) .topbar .nav-account.current{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 6px 18px rgba(155,89,182,.45)}
+:where(html[data-theme="dark"]) .topbar .nav-btn:hover,:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:hover,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible{box-shadow:0 12px 24px rgba(0,0,0,.55)}
+:where(html[data-theme="dark"]) .topbar .nav-btn.active:hover,:where(html[data-theme="dark"]) .topbar .nav-btn.active:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account.current:hover,:where(html[data-theme="dark"]) .topbar .nav-account.current:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 12px 24px rgba(0,0,0,.55)}
+:where(html[data-theme="dark"]) .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar .nav-account:focus-visible{outline:2px solid rgba(255,255,255,.95)}
+:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-btn:hover,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-btn:focus-visible,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-account:hover,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-account:focus-visible{box-shadow:0 10px 30px rgba(255,255,255,.55)}
+:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-btn.active:hover,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-btn.active:focus-visible,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-account.current:hover,:where(html[data-theme="dark"])[data-theme="dark"] .topbar .nav-account.current:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 10px 30px rgba(255,255,255,.55)}
 /* Ajustes à mão do tema escuro (o gerador cola isto no fim do dark.css). */
 /* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
 html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
