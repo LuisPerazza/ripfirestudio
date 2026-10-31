@@ -1261,6 +1261,7 @@ async function sendOrder(data,files,statusSel){
       stat(statusSel,`Enviando arte... ${mb(sent)} de ${mb(total)} MB`,true);
       const up=await fetch(d.urls[field],{method:'PUT',headers:{'Content-Type':blob.type||'application/octet-stream','x-upsert':'true'},body:blob})
         .catch(()=>null);
+      if(up&&up.status===413) throw new Error('O arquivo da arte ficou grande demais para enviar. Diminua a chapa (ou divida em dois pedidos) e tente de novo.');
       if(!up||!up.ok) throw new Error('Não foi possível enviar a arte. Confira sua internet e tente de novo.');
       sent+=blob.size;
     }
@@ -2367,10 +2368,10 @@ async function loadStaff(){
   $('#staffTable').innerHTML=`${info.email_ready?'':'<p class="adm-note"><b>Atenção:</b> o envio de e-mail (recuperar senha) ainda não está configurado no servidor.</p>'}<table class="adm-table"><thead><tr><th>Usuário</th><th>E-mail</th><th>Papel</th><th>2FA</th><th>Origem</th><th></th></tr></thead><tbody>
     ${list.map(u=>`<tr${u.active?'':' class="off"'}><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.email||'–')}</td><td>${esc(u.role_name)}</td>
       <td>${u.two_factor?'<span class="pos">Ligado</span>':'<span class="neg">Desligado</span>'}</td>
-      <td>${u.source==='config'?(u.active?'config.json':'config.json (desligado)'):'Criado no Admin'}</td>
-      <td class="adm-actions">${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-stafflink="${esc(u.user)}">Link de nova senha</button>`:''}
-        ${u.two_factor&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
-        ${u.source!=='config'&&u.user!==adminUser?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
+      <td>${u.source==='config'?(u.active?'config.json':'config.json (desligado)'):u.source==='duplicado'?'<span class="neg">Duplicado: o do config.json é que vale</span>':'Criado no Admin'}</td>
+      <td class="adm-actions">${u.source==='equipe'&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-stafflink="${esc(u.user)}">Link de nova senha</button>`:''}
+        ${u.two_factor&&u.user!==adminUser&&u.source!=='duplicado'?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
+        ${(u.source==='equipe'&&u.user!==adminUser)||u.source==='duplicado'?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
     </tbody></table>`;
   $$('[data-reset2fa]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Desligar o 2FA de ${b.dataset.reset2fa}? Use quando a pessoa perdeu o celular.`)) return;
     try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.reset2fa)}/2fa`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });

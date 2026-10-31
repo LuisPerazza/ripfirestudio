@@ -194,3 +194,17 @@ lá um atalho do `sincronizar_producao.bat`.
   dados vinda de outro site é recusada.
 - **Banco**: RLS ligado em todas as tabelas no Supabase (a API pública não
   lê nada); cada cliente só vê os próprios pedidos.
+
+### Recuperar o acesso do Admin
+
+- **Esqueceu a senha de um login do config.json:** abra
+  `/static/gerar-hash.html` no site, gere o hash da senha nova e troque o
+  `"key"` desse usuário no config.json (Render > Environment > Secret Files).
+  Salve com "Save, rebuild, and deploy".
+- **Perdeu o celular do 2FA e não há outro admin:** coloque no config.json
+  `"zerar_2fa": ["SeuUsuario"]` e salve. Ao subir, o site desliga o 2FA desse
+  usuário. Entre, ligue o 2FA de novo no celular novo e **tire a linha** do
+  config.json (enquanto ela estiver lá, todo reinício desliga o 2FA de novo).
+- **Limite de arquivo:** com o Supabase grátis cada arquivo vai até 50 MB
+  (`STORAGE_MAX_MB` no Environment muda o limite, ex.: 500 no plano Pro). O
+  cliente vê o aviso antes de enviar.

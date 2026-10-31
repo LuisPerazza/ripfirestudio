@@ -572,6 +572,20 @@ ROLES = {"admin": "Admin", "producao": "Produção"}
 STAFF_SESSION_SECONDS = 12 * 3600
 
 
+def reset_2fa_from_config():
+    """config.json: "zerar_2fa": ["usuario"] desliga o 2FA desses usuários ao
+    subir o site (quem perdeu o celular e não tem outro admin pra zerar).
+    Tire do config.json depois de entrar e ligar o 2FA de novo."""
+    users = [str(u) for u in CONFIG.get("zerar_2fa") or [] if u]
+    if not users:
+        return
+    with db() as con:
+        for user in users:
+            con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
+            con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    print(f"[aviso] 2FA desligado pelo config.json (zerar_2fa) para: {', '.join(users)}. Tire essa linha depois.")
+
+
 def get_setting(key: str, default: str = "") -> str:
     with db() as con:
         row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -896,7 +910,7 @@ async def save_upload(upload: UploadFile, path: Path):
     Acima de max_upload_mb o envio é recusado (o arquivo parcial fica na
     pasta do pedido, que o create_order apaga ao receber o erro)."""
     dpi = int(CONFIG.get("dpi") or 300)
-    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    max_mb = max_upload_mb()
     written = 0
     first = True
     with path.open("wb") as f:
@@ -1443,6 +1457,7 @@ def seed_default_mockups():
 
 
 init_db()
+reset_2fa_from_config()
 if STORE:
     try:
         STORE.ensure_bucket()
@@ -1531,11 +1546,14 @@ async def security_middleware(request: Request, call_next):
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and not path.startswith(CSRF_EXEMPT) \
                 and request.headers.get("origin") and not _same_origin(request):
             return JSONResponse({"detail": "Origem não permitida."}, status_code=403)
-        try:
-            check_rate_limit(f"api:{client_ip(request)}", API_LIMIT, API_WINDOW,
-                             "Muitas requisições em pouco tempo. Aguarde alguns minutos.")
-        except HTTPException as exc:
-            return JSONResponse({"detail": exc.detail}, status_code=429, headers={"Retry-After": "60"})
+        # Miniaturas da biblioteca não contam: uma pasta aberta pede dezenas de uma
+        # vez, e vários clientes na mesma rede do celular dividem o mesmo IP.
+        if not (request.method == "GET" and path.endswith("/thumb")):
+            try:
+                check_rate_limit(f"api:{client_ip(request)}", API_LIMIT, API_WINDOW,
+                                 "Muitas requisições em pouco tempo. Aguarde alguns minutos.")
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=429, headers={"Retry-After": "60"})
     response = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
@@ -2615,6 +2633,16 @@ def note_source_file(data: dict[str, Any], number: int, file_name: str):
 UPLOAD_MAX_AGE = 86400  # pasta provisória esquecida (pedido desistido) some depois de 1 dia
 
 
+def max_upload_mb() -> int:
+    """Tamanho máximo de cada arquivo. No Supabase o limite é do plano (50 MB
+    no grátis): STORAGE_MAX_MB no ambiente. Acima dele o Storage recusa o envio
+    com um erro que o cliente não entende; aqui ele vê o limite antes de enviar."""
+    limit = int(CONFIG.get("max_upload_mb") or 600)
+    if STORE:
+        limit = min(limit, int(os.getenv("STORAGE_MAX_MB", "50") or 50))
+    return limit
+
+
 def staged_ext(field: str) -> str:
     return ".jpg" if field.startswith("placement") else ".png"
 
@@ -2658,7 +2686,7 @@ def create_order_uploads(payload: UploadRequest, buyer: dict[str, Any] = Depends
         raise HTTPException(503, "Envio direto não configurado neste servidor.")
     check_rate_limit(f"uploads:{buyer['id']}", 30, 3600,
                      "Muitos envios em pouco tempo. Aguarde um pouco e tente de novo.")
-    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    max_mb = max_upload_mb()
     fields: dict[str, str] = {}  # campo -> extensão
     if len(payload.files) > len(ORDER_FILE_FIELDS) + 99:
         raise HTTPException(400, "Artes demais num pedido só.")
@@ -2691,7 +2719,7 @@ def take_staged_files(buyer_id: str, token: str, folder: Path, sale_type: str, d
     assert STORE
     if not UPLOAD_TOKEN.fullmatch(token):
         raise HTTPException(400, "Envio das artes inválido. Tente de novo.")
-    max_mb = int(CONFIG.get("max_upload_mb") or 600)
+    max_mb = max_upload_mb()
     dpi = int(CONFIG.get("dpi") or 300)
     staged = {Path(f["name"]).stem: f for f in STORE.list_files(prefix_key=staging_prefix(buyer_id, token))}
     if not staged:
@@ -3122,6 +3150,10 @@ def staff_list() -> dict[str, Any]:
     out += [{"user": r["username"], "role": r["role"], "email": r["email"], "source": "equipe",
              "created_at": r["created_at"], "created_by": r["created_by"], "active": True}
             for r in rows if r["username"] not in all_cfg]
+    # Mesmo nome no config.json e no banco: o do config.json é o que entra; o do banco fica parado.
+    out += [{"user": r["username"], "role": r["role"], "email": r["email"], "source": "duplicado",
+             "created_at": r["created_at"], "created_by": r["created_by"], "active": False}
+            for r in rows if r["username"] in all_cfg]
     for item in out:
         item["two_factor"] = item["user"] in twofa
         item["role_name"] = ROLES.get(item["role"], item["role"])
@@ -3161,17 +3193,23 @@ def staff_create(payload: StaffCreate, staff: dict[str, Any] = Depends(require_a
 
 @app.delete("/api/admin/staff/{user}")
 def staff_delete(user: str, staff: dict[str, Any] = Depends(require_admin_setup)) -> dict[str, Any]:
-    if user in config_staff(include_disabled=True):
-        raise HTTPException(400, "Esse usuário vem do config.json: desligue os logins do config.json.")
-    if user == staff["user"]:
-        raise HTTPException(400, "Você não pode remover o próprio usuário.")
+    # Tudo que consulta o banco por fora é lido antes de abrir a conexão (uma
+    # conexão dentro de outra trava o Postgres com pouco movimento).
+    in_config = user in config_staff(include_disabled=True)
+    cfg_disabled = config_logins_disabled()
+    admins = db_admin_count()
     with db() as con:
         row = con.execute("SELECT role FROM staff_users WHERE username=?", (user,)).fetchone()
-        if row and row["role"] == "admin" and config_logins_disabled() and db_admin_count() <= 1:
+        if in_config and not row:
+            raise HTTPException(400, "Esse usuário vem do config.json: remova por lá.")
+        if user == staff["user"] and not in_config:
+            raise HTTPException(400, "Você não pode remover o próprio usuário.")
+        if row and row["role"] == "admin" and not in_config and cfg_disabled and admins <= 1:
             raise HTTPException(400, "É o último admin: crie outro antes de remover.")
         con.execute("DELETE FROM staff_users WHERE username=?", (user,))
-        con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
-        con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+        if not in_config:  # o 2FA e a sessão do login do config.json (mesmo nome) ficam
+            con.execute("DELETE FROM staff_totp WHERE username=?", (user,))
+            con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
     return {"ok": True}
 
 
@@ -3190,8 +3228,9 @@ def staff_config_logins(payload: ConfigLogins, staff: dict[str, Any] = Depends(r
             raise HTTPException(400, "Ligue o 2FA no seu usuário antes de desligar os logins do config.json.")
     set_setting("config_logins_disabled", "1" if payload.disabled else "0")
     if payload.disabled:
+        users = list(config_staff(include_disabled=True))
         with db() as con:
-            for user in config_staff(include_disabled=True):
+            for user in users:
                 con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
     return {"ok": True, "disabled": config_logins_disabled()}
 
@@ -3688,7 +3727,9 @@ def customer_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
 @app.post("/api/admin/forgot")
 def staff_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
     if not mail_provider():
-        return {"ok": True, "message": "Peça a outro admin um link de nova senha (Admin > Segurança > Equipe)."}
+        return {"ok": True, "message": "Peça a outro admin um link de nova senha (Admin > Segurança). "
+                                       "Se o seu login está no config.json, gere uma senha nova em "
+                                       "/static/gerar-hash.html e troque o \"key\" no config.json do Render."}
     who = (payload.user or payload.email).strip()
     check_rate_limit(f"forgot-ip:{client_ip(request)}", 10, 3600, "Muitos pedidos em pouco tempo. Tente mais tarde.")
     check_rate_limit(f"forgot-staff:{who.lower()[:100]}", 3, 3600, "Já enviamos alguns links. Aguarde um pouco.")
