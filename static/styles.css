@@ -699,19 +699,23 @@ body.is-home .theme-toggle,body.is-editor .theme-toggle,body.is-digital .theme-t
 .topbar .nav-account{border:1px solid transparent}
 .topbar .theme-toggle:hover{transform:translateY(-3px);box-shadow:0 10px 22px rgba(0,0,0,.45)}
 
-/* ===== Menu do topo: todos os botões no formato do "Entrar" =====
-   Pílula roxa; ao passar o mouse ou clicar, sobe e ganha sombra (escura no
-   tema claro, branca no escuro). A página atual tem um anel branco fino. */
-.topbar .nav-btn,.topbar .nav-account{border:1px solid transparent;border-radius:999px;padding:9px 18px;color:#fff;text-shadow:none;
-  background:linear-gradient(135deg,#b57edc,var(--accent-dark));box-shadow:0 6px 18px rgba(155,89,182,.35)}
-.topbar .nav-btn.active,.topbar .nav-account.current{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 6px 18px rgba(155,89,182,.45)}
-.topbar .nav-btn:hover,.topbar .nav-btn:focus-visible,.topbar .nav-account:hover,.topbar .nav-account:focus-visible{transform:translateY(-4px);
-  box-shadow:0 12px 24px rgba(0,0,0,.55)}
-.topbar .nav-btn.active:hover,.topbar .nav-btn.active:focus-visible,.topbar .nav-account.current:hover,.topbar .nav-account.current:focus-visible{
-  box-shadow:0 0 0 2px rgba(255,255,255,.9),0 12px 24px rgba(0,0,0,.55)}
-.topbar .nav-btn:active,.topbar .nav-account:active{transform:translateY(-2px)}
-.topbar .nav-btn:focus-visible,.topbar .nav-account:focus-visible{outline:2px solid rgba(255,255,255,.95);outline-offset:3px}
-html[data-theme="dark"] .topbar .nav-btn:hover,html[data-theme="dark"] .topbar .nav-btn:focus-visible,
-html[data-theme="dark"] .topbar .nav-account:hover,html[data-theme="dark"] .topbar .nav-account:focus-visible{box-shadow:0 10px 30px rgba(255,255,255,.55)}
-html[data-theme="dark"] .topbar .nav-btn.active:hover,html[data-theme="dark"] .topbar .nav-btn.active:focus-visible,
-html[data-theme="dark"] .topbar .nav-account.current:hover,html[data-theme="dark"] .topbar .nav-account.current:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.9),0 10px 30px rgba(255,255,255,.55)}
+/* ===== Menu do topo: só as letras, em 3D =====
+   Letra branca com "espessura" (camadas de sombra cinza) e sombra no chão.
+   Ao passar o mouse ou clicar, a palavra sobe e a sombra cresce: escura no
+   tema claro, brilho branco no escuro. A página atual tem um traço embaixo. */
+.topbar nav .nav-btn,.topbar nav .nav-account{position:relative;background:none;border:0;box-shadow:none;border-radius:8px;
+  padding:8px 12px;color:#fff;font-size:17px;letter-spacing:.8px;
+  text-shadow:0 1px 0 #e4e4e7,0 2px 0 #c9c9ce,0 3px 0 #ababb1,0 4px 0 #8e8e95,0 5px 8px rgba(0,0,0,.55);
+  transition:transform .18s ease,text-shadow .18s ease}
+.topbar nav .nav-account.logged{padding:5px 12px 5px 5px}
+.topbar nav .nav-btn::after,.topbar nav .nav-account::after{content:'';position:absolute;left:12px;right:12px;bottom:-2px;height:3px;border-radius:3px;
+  background:rgba(255,255,255,1);box-shadow:0 2px 6px rgba(0,0,0,.5);transform:scaleX(0);transition:transform .2s ease}
+.topbar nav .nav-btn.active::after,.topbar nav .nav-account.current::after{transform:scaleX(1)}
+.topbar nav .nav-btn:hover,.topbar nav .nav-btn:focus-visible,.topbar nav .nav-account:hover,.topbar nav .nav-account:focus-visible{
+  transform:translateY(-4px);box-shadow:none;
+  text-shadow:0 1px 0 #e4e4e7,0 2px 0 #c9c9ce,0 3px 0 #ababb1,0 4px 0 #8e8e95,0 5px 0 #77777e,0 6px 0 #616168,0 12px 16px rgba(0,0,0,.7)}
+.topbar nav .nav-btn:active,.topbar nav .nav-account:active{transform:translateY(-1px)}
+.topbar nav .nav-btn:focus-visible,.topbar nav .nav-account:focus-visible{outline:2px solid rgba(255,255,255,.9);outline-offset:4px}
+html[data-theme="dark"] .topbar nav .nav-btn:hover,html[data-theme="dark"] .topbar nav .nav-btn:focus-visible,
+html[data-theme="dark"] .topbar nav .nav-account:hover,html[data-theme="dark"] .topbar nav .nav-account:focus-visible{
+  text-shadow:0 1px 0 #e4e4e7,0 2px 0 #c9c9ce,0 3px 0 #ababb1,0 4px 0 #8e8e95,0 5px 0 #77777e,0 6px 0 #616168,0 0 18px rgba(255,255,255,.75),0 10px 22px rgba(255,255,255,.35)}
