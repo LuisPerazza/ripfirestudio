@@ -6,7 +6,9 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=54">
+  <link rel="stylesheet" href="/static/styles.css?v=55">
+  <link rel="stylesheet" href="/static/dark.css?v=2">
+  <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -35,6 +37,10 @@
 <header class="topbar">
   <button type="button" id="homeLogo" class="home-logo" aria-label="Ripfire Studio: voltar ao início"><img class="brand-logo" src="/static/img/logo.png" alt=""></button>
   <nav>
+    <button type="button" id="themeToggle" class="theme-toggle" aria-label="Mudar para o tema escuro" title="Tema escuro">
+      <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>
+      <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 14.6A8.4 8.4 0 0 1 9.4 3.8a8.4 8.4 0 1 0 10.8 10.8z"/></svg>
+    </button>
     <button class="nav-btn active" data-tab="home">Início</button>
     <button class="nav-btn" data-tab="editor">Personalizar</button>
     <button class="nav-btn" data-tab="digital">Artes digitais</button>
@@ -610,6 +616,6 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=61"></script>
+<script src="/static/app.js?v=62"></script>
 </body>
 </html>

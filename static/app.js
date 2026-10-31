@@ -304,6 +304,14 @@ function bindMaskedInput(el,formatter){
   // Não manda só o "+55" do foco quando a pessoa não digitou nada.
   el.addEventListener('blur',()=>{ if(el.value===formatter('')) el.value=''; });
 }
+function bindThemeToggle(){
+  const btn=$('#themeToggle'); if(!btn||!window.rfTheme) return;
+  const sync=()=>{ const dark=rfTheme.get()==='dark';
+    btn.setAttribute('aria-label',dark?'Mudar para o tema claro':'Mudar para o tema escuro');
+    btn.title=dark?'Tema claro':'Tema escuro'; btn.setAttribute('aria-pressed',String(dark)); };
+  btn.onclick=()=>{ rfTheme.toggle(); sync(); if(typeof render==='function') render(); if(typeof renderGangCanvas==='function') renderGangCanvas(); if(ADM&&ADM.dash&&ADM.pane==='dash') renderDashboard(); };
+  sync();
+}
 function showForgot(){
   $('#authLoginForm').hidden=true; $('#authForgotForm').hidden=false;
   $('#authGuest').classList.add('forgot-mode');
@@ -475,6 +483,7 @@ function bind(){
   // form, que é o × de fechar: o modal sumia em vez de entrar/cadastrar.
   const onEnter=(sels,fn)=>sels.forEach(s=>$(s).addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();fn()}}));
   onEnter(['#loginEmail','#loginPassword'],submitLogin);
+  bindThemeToggle();
   $('#forgotLink').onclick=showForgot; $('#forgotBack').onclick=()=>switchAuthTab('login');
   $('#forgotSubmitBtn').onclick=submitForgot; onEnter(['#forgotEmail'],submitForgot);
   $('#resetSubmitBtn').onclick=submitReset; onEnter(['#resetPass1','#resetPass2'],submitReset);

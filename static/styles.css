@@ -684,3 +684,14 @@ body .site-footer,body.is-home .site-footer,body.is-editor .site-footer,body.is-
 #resetLinkText{width:100%;font-size:12.5px;margin:4px 0 12px}
 .reset-link-actions{display:flex;gap:8px;flex-wrap:wrap}
 .reset-link-actions>*{flex:1;text-align:center;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+/* botão de tema (sol / lua) */
+.theme-toggle{width:44px;height:44px;border-radius:50%;border:0;background:transparent;color:#fff;display:inline-grid;place-items:center;align-self:center;margin-right:4px;transition:background .15s,transform .2s}
+.theme-toggle:hover{background:rgba(255,255,255,.12)}
+.theme-toggle:active{transform:rotate(25deg)}
+.theme-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.theme-toggle svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.theme-toggle .ico-sun circle{fill:currentColor;stroke:none}
+.theme-toggle .ico-moon{display:none}
+html[data-theme="dark"] .theme-toggle .ico-sun{display:none}
+html[data-theme="dark"] .theme-toggle .ico-moon{display:block;fill:currentColor;stroke:none}
+body.is-home .theme-toggle,body.is-editor .theme-toggle,body.is-digital .theme-toggle{filter:drop-shadow(0 1px 4px rgba(0,0,0,.7))}
