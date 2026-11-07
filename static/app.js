@@ -1283,7 +1283,7 @@ async function openCheckout(orderId){
   location.href=d.url;
 }
 async function afterOrderCreated(d,statusSel){
-  if(!CONFIG.online_payment) return stat(statusSel,`Pedido ${d.order_number} criado. Total: ${money(d.total)}`,true);
+  if(!CONFIG.online_payment) return stat(statusSel,`Pedido ${d.order_number} criado (${money(d.total)}). O pagamento pelo site ainda está sendo ativado: chame a loja no WhatsApp para pagar.`,true);
   stat(statusSel,`Pedido ${d.order_number} criado (${money(d.total)}). Abrindo o pagamento...`,true);
   track('begin_checkout',{value:d.total,currency:'BRL'});
   try{ await openCheckout(d.id); }
@@ -1563,7 +1563,7 @@ async function requestPremium(){
       try{ await openCheckout(d.id); return {ok:true,msg:`Pedido ${d.order_number} criado. Abrindo o pagamento...`}; }
       catch(e){ return {ok:false,msg:`Pedido ${d.order_number} criado, mas o pagamento não abriu: ${e.message} Pague depois em Minha conta.`}; }
     }
-    return {ok:true,msg:`Pedido ${d.order_number} criado (${money(d.total)}). O premium é liberado assim que o pagamento for aprovado.`};
+    return {ok:true,msg:`Pedido ${d.order_number} criado (${money(d.total)}). O pagamento pelo site ainda está sendo ativado: chame a loja no WhatsApp para pagar; o premium é liberado assim que o pagamento for confirmado.`};
   }catch(e){ return {ok:false,msg:e.message}; }
 }
 async function subscribePremium(){
