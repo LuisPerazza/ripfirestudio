@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=67">
-  <link rel="stylesheet" href="/static/dark.css?v=14">
+  <link rel="stylesheet" href="/static/styles.css?v=68">
+  <link rel="stylesheet" href="/static/dark.css?v=15">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -468,10 +468,10 @@
           <p class="adm-note"><b>Admin</b> vê e muda tudo. <b>Produção</b> só vê os pedidos, baixa os arquivos e muda a etapa: é o login do PC da impressão (programa de sincronizar).</p>
           <div id="staffTable" class="adm-table-wrap"></div>
           <form id="staffForm" class="adm-staff-form">
-            <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: producao" autocomplete="off"></label>
+            <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: impressao1" autocomplete="off"></label>
             <label><span class="adm-label">E-mail (obrigatório para Admin)</span><input id="staffEmail" type="email" autocomplete="off" placeholder="nome@email.com"></label>
             <label><span class="adm-label">Senha (mín. 12)</span><input id="staffPass" type="password" minlength="12" required autocomplete="new-password"></label>
-            <label><span class="adm-label">Papel</span><select id="staffRole"><option value="admin">Admin</option><option value="producao">Produção</option></select></label>
+            <label><span class="adm-label">Papel</span><select id="staffRole"><option value="admin">Admin</option><option value="impressao">Impressão</option><option value="prensa">Prensa</option><option value="sync">PC servidor (sincronização)</option></select></label>
             <button class="primary">Adicionar</button>
           </form>
           <div id="staffStatus" role="status" aria-live="polite"></div>
@@ -590,6 +590,15 @@
   </form>
 </dialog>
 
+<dialog id="placementModal" class="placement-modal">
+  <form method="dialog" class="modal-card">
+    <button class="close" value="cancel" aria-label="Fechar">×</button>
+    <h2 id="placementTitle">Posição do DTF</h2>
+    <p id="placementInfo" class="adm-note"></p>
+    <div id="placementBody" class="pos-grid"></div>
+  </form>
+</dialog>
+
 <dialog id="resetLinkModal">
   <form method="dialog" class="modal-card auth-card">
     <button class="close" value="cancel" aria-label="Fechar">×</button>
@@ -616,7 +625,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=67"></script>
+<script src="/static/app.js?v=68"></script>
 <script src="/static/senha.js?v=1"></script>
 </body>
 </html>

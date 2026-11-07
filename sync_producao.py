@@ -127,7 +127,7 @@ class Site:
             raise
         if d.get("need_code"):
             sys.exit("Esse usuário usa verificação em duas etapas (2FA). Crie no Admin > Segurança um usuário "
-                     f"com papel Produção, sem 2FA, e coloque em {CONFIG_FILE.name}.")
+                     f"com papel \"PC servidor (sincronização)\", sem 2FA, e coloque em {CONFIG_FILE.name}.")
         self.token = d["token"]
 
     def _headers(self) -> dict:

@@ -112,8 +112,9 @@ O site não copia mais nada para o PC. Quem traz os pedidos pagos é o
 1. Copie `sync_producao.py` e `sincronizar_producao.bat` para uma pasta no PC
    (ex.: `C:\Ripfire`). Precisa do Python instalado; o programa instala
    sozinho o Pillow e o pypdf na primeira vez.
-2. No Admin, aba **Segurança**, crie um usuário com papel **Produção** (ele só
-   vê os pedidos, baixa os arquivos e muda a etapa; não ligue o 2FA nele).
+2. No Admin, aba **Segurança**, crie um usuário com papel **PC servidor
+   (sincronização)** (é só para o programa: vê os pedidos com o valor, que vai
+   no txt, e não usa 2FA).
    Dê dois cliques no `sincronizar_producao.bat`. Na primeira vez ele pergunta
    o endereço do site, esse usuário e a senha, e a pasta de produção.
    Pode ser uma pasta de rede: use o caminho `\\PC-IMPRESSORA\DTF\PEDIDOS`
@@ -178,8 +179,9 @@ lá um atalho do `sincronizar_producao.bat`.
 - **Headers**: CSP (só roda script do site e dos serviços que a loja usa),
   anti-iframe, nosniff, Referrer-Policy e Permissions-Policy em toda resposta.
 - **Admin**: login com sessão de 12 h e verificação em duas etapas (aba
-  Segurança), obrigatória para o papel Admin. Papéis: Admin (tudo) e
-  Produção (pedidos e arquivos). Admin é criado na aba Segurança, com e-mail;
+  Segurança), obrigatória para o papel Admin. Papéis: Admin (tudo);
+  Impressão (pedidos e arquivos, sem valores); Prensa (só pedidos com camiseta,
+  com a foto da posição, sem valores); PC servidor (login do sync_producao.py). Admin é criado na aba Segurança, com e-mail;
   os logins do config.json podem ser desligados lá mesmo.
 - **Recuperar senha sem e-mail configurado**: o cliente pede pelo WhatsApp e o
   Admin (aba Clientes) gera o link de nova senha e envia pelo WhatsApp dele.

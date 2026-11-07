@@ -1974,15 +1974,18 @@ function admShow(pane){
   ({dash:loadDashboard,orders:loadOrders,customers:loadCustomers,costs:loadCosts,arts:renderLibraryAdmin,
     mockups:renderMockupsList,more:()=>{loadLgpdRequests();loadBackups()},security:loadSecurity}[pane]||(()=>{}))();
 }
-const STAFF_PANES={producao:['orders','security']};
+// Quem não é admin só vê Pedidos (sem valores; a prensa só os com camiseta).
+const STAFF_PANES={impressao:['orders'],prensa:['orders'],sync:['orders']};
 async function enterAdmin(){
   if(!adminKey){ openAdminLogin(); return; }
   let me=null;
   try{ me=await admFetch('/api/admin/me'); }catch(e){ return; }
   ADM.mustSetup2fa=!!(me.two_factor_required&&!me.two_factor);
+  if(me.role&&me.role!==adminRole){ adminRole=me.role; saveAdminSession(); }
+  ADM.money=me.sees_money!==false;
   const allowed=ADM.mustSetup2fa?['security']:STAFF_PANES[adminRole];
   if(ADM.mustSetup2fa) ADM.pane='security';
-  $('#admWho').textContent=`Logado como ${adminUser} · ${adminRole==='producao'?'Produção':'Admin'}`;
+  $('#admWho').textContent=`Logado como ${adminUser} · ${me.role_name||'Admin'}`;
   $$('[data-adm]').forEach(b=>b.hidden=!!allowed&&!allowed.includes(b.dataset.adm));
   if(allowed&&!allowed.includes(ADM.pane)) ADM.pane='orders';
   admShow(ADM.pane);
@@ -2113,7 +2116,7 @@ async function loadWaMessage(){
   try{ const d=await admFetch('/api/admin/whatsapp-message'); ADM.waMsg=d.message; ADM.waDefault=d.default; }
   catch(e){ ADM.waMsg=ADM.waMsg||''; }
   const box=$('#waMsgText'); if(box&&!box.matches(':focus')) box.value=ADM.waMsg||'';
-  $('#waMsgCard').hidden=adminRole==='producao';
+  $('#waMsgCard').hidden=adminRole!=='admin';
   renderWaPreview();
 }
 function waFill(tpl,o){
@@ -2137,6 +2140,28 @@ function bindWaMessage(){
     finally{ b.disabled=false; }
   };
 }
+// Fotos da camisa com a arte no lugar que o cliente escolheu (pra prensa).
+function placementSides(o){
+  const d=o.data||{}; return [['FRONT','Frente','placement_front'],['BACK','Costas','placement_back']].filter(([,,k])=>d[k]&&d[k].file);
+}
+async function showPlacement(o){
+  if(!o) return;
+  const dlg=$('#placementModal'), body=$('#placementBody');
+  $('#placementTitle').textContent=`Posição do DTF · pedido ${o.order_number}`;
+  const p=(o.data||{}).product||{}, sizes=Object.entries(p.sizes||{}).filter(([,q])=>q>0).map(([s,q])=>`${s}×${q}`).join(' ');
+  $('#placementInfo').textContent=[o.customer_name,`${p.shirt_model||''} ${p.color||''}`.trim(),sizes].filter(Boolean).join(' · ');
+  body.innerHTML=placementSides(o).map(([side,label])=>`<figure><figcaption>${label}</figcaption><div class="pos-img" data-side="${side}">Carregando…</div></figure>`).join('');
+  dlg.showModal();
+  for(const [side] of placementSides(o)){
+    const box=body.querySelector(`[data-side="${side}"]`);
+    try{
+      const r=await fetch(`/api/admin/orders/${o.id}/placement/${side}`,{headers:adminHeaders()});
+      if(!r.ok) throw new Error('Foto não encontrada.');
+      const url=URL.createObjectURL(await r.blob());
+      box.innerHTML=`<a href="${url}" target="_blank" rel="noopener" title="Abrir em tamanho grande"><img src="${url}" alt="Posição: ${side==='FRONT'?'frente':'costas'}"></a>`;
+    }catch(e){ box.textContent=e.message; }
+  }
+}
 function waCell(o){
   if(o.payment_status!=='PAID'||o.sale_type==='PREMIUM_SUB') return '';
   const wa=waLink(o.customer_whatsapp);
@@ -2155,17 +2180,17 @@ function renderOrders(){
   const list=ADM.orders.filter(o=>(ADM.filter==='ALL'||orderStageKey(o)===ADM.filter)
     &&(!q||normTxt(`${o.order_number} ${o.customer_name} ${o.customer_email||''}`).includes(q)));
   $('#ordersTable').innerHTML=list.length?`<table class="adm-table adm-orders"><thead><tr>
-      <th>Pedido</th><th>Cliente</th><th>Produto</th><th>Valor</th><th>Etapa</th><th>Ações</th></tr></thead><tbody>
+      <th>Pedido</th><th>Cliente</th><th>Produto</th>${ADM.money?'<th>Valor</th>':''}<th>Etapa</th><th>Ações</th></tr></thead><tbody>
     ${list.map(o=>{const k=orderStageKey(o), prod=o.payment_status==='PAID'&&o.sale_type!=='PREMIUM_SUB', wa=waLink(o.customer_whatsapp);
       const profit=o.cost==null?null:Number(o.total)-Number(o.cost);
       return `<tr>
         <td><b>${esc(o.order_number)}</b><small>${fmtDate(o.created_at)}</small></td>
         <td>${esc(o.customer_name)}<small>${esc(o.customer_email||'')}${wa?` · <a href="${wa}" target="_blank" rel="noopener">WhatsApp</a>`:''}</small></td>
         <td>${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}<small>${esc(orderLine(o))}</small></td>
-        <td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>
+        ${ADM.money?`<td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>`:''}
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
           :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
-        <td class="adm-actions">${waCell(o)}${adminRole!=='producao'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
+        <td class="adm-actions">${waCell(o)}${placementSides(o).length?`<button type="button" class="adm-btn sm adm-pos-btn" data-place="${o.id}" title="Onde o cliente posicionou o DTF na camisa">Ver posição</button>`:''}${adminRole==='admin'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
@@ -2176,6 +2201,7 @@ function renderOrders(){
       renderOrders(); }
     catch(e){ alert(e.message); sel.disabled=false; }
   });
+  $$('#ordersTable [data-place]').forEach(b=>b.onclick=()=>showPlacement(ADM.orders.find(x=>x.id===b.dataset.place)));
   $$('#ordersTable [data-wa]').forEach(a=>a.addEventListener('click',async()=>{
     // O link abre o WhatsApp; aqui só registra que a equipe avisou.
     try{ const d=await admFetch(`/api/admin/orders/${a.dataset.wa}/wa-notified`,{method:'POST'});

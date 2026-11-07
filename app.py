@@ -565,14 +565,60 @@ class PasswordChange(BaseModel):
 
 
 # ---------- Equipe do Admin: sessão, 2FA e papéis ----------
-# Papéis: "admin" faz tudo; "producao" só vê os pedidos, baixa os arquivos e
-# muda a etapa (é o login do PC da impressão). Os usuários do config.json
+# Papéis: "admin" faz tudo. "impressao" vê os pedidos (sem valores), baixa as
+# artes, muda a etapa e avisa o cliente no WhatsApp. "prensa" é igual, mas só
+# vê os pedidos com camiseta e as fotos de onde o cliente pôs o DTF. "sync" é o
+# login do programa do PC servidor (sync_producao.py): vê todos os pedidos com
+# valor (vai no txt da pasta), sem 2FA. O antigo "producao" virou "sync". Os usuários do config.json
 # (admin_user e "admins") são admin, salvo "role" no item; os criados pelo
 # Admin ficam na tabela staff_users.
 # Entrar: POST /api/admin/login com usuário, senha e, se a pessoa ligou o 2FA,
 # o código de 6 dígitos do app autenticador. Volta um token de sessão (12 h);
 # a senha não trafega mais em toda chamada.
-ROLES = {"admin": "Admin", "producao": "Produção"}
+ROLES = {"admin": "Admin", "impressao": "Impressão", "prensa": "Prensa", "sync": "PC servidor (sincronização)"}
+LEGACY_ROLES = {"producao": "sync"}
+SHIRT_SALE_TYPES = {"FINISHED_SHIRT", "DTF_PLUS_SHIRT"}
+# Campos com dinheiro que só o admin (e o PC servidor) recebe.
+MONEY_KEYS = {"total", "cost", "payment_ref", "price", "unit_price", "subtotal", "discount", "shipping", "valor"}
+
+
+def norm_role(role: Any) -> str:
+    role = LEGACY_ROLES.get(str(role or ""), str(role or ""))
+    return role if role in ROLES else "admin"
+
+
+def sees_money(staff: dict[str, Any]) -> bool:
+    return staff["role"] in ("admin", "sync")
+
+
+def staff_sees_order(staff: dict[str, Any], row: dict[str, Any]) -> bool:
+    if staff["role"] in ("admin", "sync"):
+        return True
+    if row.get("sale_type") in ("PREMIUM_SUB", "DIGITAL_ART"):
+        return False
+    return staff["role"] != "prensa" or row.get("sale_type") in SHIRT_SALE_TYPES
+
+
+def staff_order(order_id: str, staff: dict[str, Any]) -> dict[str, Any]:
+    """Pedido que essa pessoa da equipe pode ver; senão 404 (não entrega que existe)."""
+    row = load_order(order_id)
+    if not row or not staff_sees_order(staff, row):
+        raise HTTPException(404, "Pedido não encontrado.")
+    return row
+
+
+def hide_money(order: dict[str, Any]) -> dict[str, Any]:
+    for k in list(order):
+        if k in MONEY_KEYS:
+            order.pop(k)
+    data = order.get("data")
+    if isinstance(data, dict):
+        order["data"] = {k: v for k, v in data.items() if k not in MONEY_KEYS and "price" not in k}
+    return order
+
+
+# Arquivos do pedido que levam o valor: ficam fora do zip de quem não vê valores.
+MONEY_FILES = {"pedido.json", "LEIA-ME-PRODUCAO.json"}
 STAFF_SESSION_SECONDS = 12 * 3600
 
 
@@ -622,7 +668,7 @@ def config_staff(include_disabled: bool = False) -> dict[str, dict[str, str]]:
     for a in items:
         user, key = str(a.get("user") or ""), str(a.get("key") or "")
         if user and key and not key.startswith("TROQUE-"):
-            role = a.get("role") if a.get("role") in ROLES else "admin"
+            role = norm_role(a.get("role")) if a.get("role") else "admin"
             out.setdefault(user, {"user": user, "key": key, "role": role, "source": "config"})
     return out
 
@@ -633,7 +679,7 @@ def staff_account(user: str) -> dict[str, str] | None:
         return cfg[user]
     with db() as con:
         row = con.execute("SELECT username, password_hash, role, email FROM staff_users WHERE username=?", (user,)).fetchone()
-    return ({"user": row["username"], "key": row["password_hash"], "role": row["role"], "email": row["email"],
+    return ({"user": row["username"], "key": row["password_hash"], "role": norm_role(row["role"]), "email": row["email"],
              "source": "equipe"} if row else None)
 
 
@@ -713,14 +759,28 @@ def staff_from_request(request: Request, token: str | None, user: str | None, ke
     return {"user": account["user"], "role": account["role"], "token": None}
 
 
+def require_staff_login(
+    request: Request,
+    x_admin_token: str | None = Header(None),
+    x_admin_key: str | None = Header(None),
+    x_admin_user: str | None = Header(None),
+) -> dict[str, Any]:
+    """Qualquer pessoa da equipe logada, mesmo admin que ainda não ligou o 2FA
+    (é o que deixa ele chegar na aba Segurança pra ligar)."""
+    return staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
+
+
 def require_staff(
     request: Request,
     x_admin_token: str | None = Header(None),
     x_admin_key: str | None = Header(None),
     x_admin_user: str | None = Header(None),
 ) -> dict[str, Any]:
-    """Qualquer pessoa da equipe (admin ou produção)."""
-    return staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
+    """Qualquer pessoa da equipe. Admin sem o 2FA obrigatório não passa (só a aba Segurança)."""
+    staff = staff_from_request(request, x_admin_token, x_admin_user, x_admin_key)
+    if staff["role"] == "admin" and admin_2fa_required() and not staff_has_2fa(staff["user"]):
+        raise HTTPException(403, "Ligue a verificação em duas etapas (aba Segurança) para usar o Admin.")
+    return staff
 
 
 def require_admin(
@@ -1819,6 +1879,18 @@ def my_order_placement(order_id: str, side: str, customer: dict[str, Any] = Depe
         raise HTTPException(404, "Foto não encontrada.")
     info = json.loads(row["data_json"]).get(key) or {}
     path = Path(row["folder_path"]) / str(info.get("file") or "")
+    if not info.get("file") or not cloud_get(path):
+        raise HTTPException(404, "Foto não encontrada.")
+    return FileResponse(path)
+
+
+@app.get("/api/admin/orders/{order_id}/placement/{side}")
+def staff_order_placement(order_id: str, side: str, staff: dict[str, Any] = Depends(require_staff)):
+    """Foto da camisa com a arte onde o cliente pôs: é por ela que a prensa acerta o lugar."""
+    row = staff_order(order_id, staff)
+    key = {"FRONT": "placement_front", "BACK": "placement_back"}.get(side)
+    info = (json.loads(row["data_json"] or "{}").get(key) or {}) if key else {}
+    path = Path(row["folder_path"] or "") / str(info.get("file") or "")
     if not info.get("file") or not cloud_get(path):
         raise HTTPException(404, "Foto não encontrada.")
     return FileResponse(path)
@@ -2979,8 +3051,8 @@ async def create_order(
         raise
 
 
-@app.get("/api/orders", dependencies=[Depends(require_staff)])
-def list_orders() -> list[dict[str, Any]]:
+@app.get("/api/orders")
+def list_orders(staff: dict[str, Any] = Depends(require_staff)) -> list[dict[str, Any]]:
     cancel_stale_orders()
     with db() as con:
         rows = con.execute(
@@ -3002,7 +3074,9 @@ def list_orders() -> list[dict[str, Any]]:
             d["cost"] = order_cost(d, d["data"], costs) if d["payment_status"] == "PAID" else None
         except Exception:
             d["cost"] = None
-        result.append(d)
+        if not staff_sees_order(staff, d):
+            continue
+        result.append(d if sees_money(staff) else hide_money(d))
     return result
 
 
@@ -3022,12 +3096,10 @@ def mark_paid(order_id: str) -> dict[str, Any]:
     }
 
 
-@app.post("/api/orders/{order_id}/mark-ready", dependencies=[Depends(require_staff)])
-def mark_ready(order_id: str) -> dict[str, Any]:
+@app.post("/api/orders/{order_id}/mark-ready")
+def mark_ready(order_id: str, staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
     """Última etapa que o cliente vê em "Minha conta": pedido pronto."""
-    row = load_order(order_id)
-    if not row:
-        raise HTTPException(404, "Pedido não encontrado.")
+    row = staff_order(order_id, staff)
     if row["sale_type"] == "PREMIUM_SUB":
         raise HTTPException(400, "Pedido de premium não tem produção.")
     if row["payment_status"] != "PAID":
@@ -3074,7 +3146,7 @@ def staff_login(payload: StaffLogin, request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/admin/logout")
-def staff_logout(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+def staff_logout(staff: dict[str, Any] = Depends(require_staff_login)) -> dict[str, Any]:
     if staff["token"]:
         with db() as con:
             con.execute("DELETE FROM staff_sessions WHERE token_hash=?",
@@ -3083,9 +3155,9 @@ def staff_logout(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, An
 
 
 @app.get("/api/admin/me")
-def staff_me(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+def staff_me(staff: dict[str, Any] = Depends(require_staff_login)) -> dict[str, Any]:
     return {"user": staff["user"], "role": staff["role"], "role_name": ROLES[staff["role"]],
-            "two_factor": staff_has_2fa(staff["user"]),
+            "two_factor": staff_has_2fa(staff["user"]), "sees_money": sees_money(staff),
             "two_factor_required": staff["role"] == "admin" and admin_2fa_required(),
             "from_config": staff["user"] in config_staff()}
 
@@ -3096,7 +3168,7 @@ class TwoFactorCode(BaseModel):
 
 
 @app.post("/api/admin/2fa/setup")
-def staff_2fa_setup(staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+def staff_2fa_setup(staff: dict[str, Any] = Depends(require_staff_login)) -> dict[str, Any]:
     """Gera a chave nova (ainda desligada). Liga só depois de confirmar um código."""
     if staff_has_2fa(staff["user"]):
         raise HTTPException(400, "A verificação em duas etapas já está ligada.")
@@ -3111,7 +3183,7 @@ def staff_2fa_setup(staff: dict[str, Any] = Depends(require_staff)) -> dict[str,
 
 
 @app.post("/api/admin/2fa/enable")
-def staff_2fa_enable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff)):
+def staff_2fa_enable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff_login)):
     row = staff_totp_row(staff["user"])
     if not row:
         raise HTTPException(400, "Gere a chave primeiro.")
@@ -3129,7 +3201,7 @@ def staff_2fa_enable(payload: TwoFactorCode, request: Request, staff: dict[str, 
 
 
 @app.post("/api/admin/2fa/disable")
-def staff_2fa_disable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff)):
+def staff_2fa_disable(payload: TwoFactorCode, request: Request, staff: dict[str, Any] = Depends(require_staff_login)):
     check_staff_password(request, staff["user"], payload.password)
     row = staff_totp_row(staff["user"])
     if row and row["enabled"] and totp_match(row["secret"], payload.code, int(row["last_counter"] or 0)) is None:
@@ -3160,7 +3232,8 @@ def staff_list() -> dict[str, Any]:
             for r in rows if r["username"] in all_cfg]
     for item in out:
         item["two_factor"] = item["user"] in twofa
-        item["role_name"] = ROLES.get(item["role"], item["role"])
+        item["role"] = norm_role(item["role"])
+        item["role_name"] = ROLES[item["role"]]
     return {"staff": out, "config_logins": len(all_cfg), "config_logins_disabled": config_logins_disabled(),
             "db_admins": db_admin_count(), "email_ready": bool(mail_provider())}
 
@@ -3256,14 +3329,12 @@ def security_ip(request: Request) -> dict[str, Any]:
             "headers": {k: request.headers.get(k) for k in names}, "ip_headers": IP_HEADERS}
 
 
-@app.patch("/api/admin/orders/{order_id}/stage", dependencies=[Depends(require_staff)])
+@app.patch("/api/admin/orders/{order_id}/stage")
 def set_order_stage(order_id: str, payload: dict[str, Any], staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
     stage = str(payload.get("stage") or "").upper()
     if stage not in ORDER_STAGES:
         raise HTTPException(400, "Etapa inválida.")
-    row = load_order(order_id)
-    if not row:
-        raise HTTPException(404, "Pedido não encontrado.")
+    row = staff_order(order_id, staff)
     if row["sale_type"] == "PREMIUM_SUB":
         raise HTTPException(400, "Pedido de premium não tem produção.")
     if row["payment_status"] != "PAID":
@@ -3307,8 +3378,7 @@ def put_wa_message(payload: dict[str, Any]) -> dict[str, Any]:
 
 @app.post("/api/admin/orders/{order_id}/wa-notified")
 def mark_wa_notified(order_id: str, staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
-    if not load_order(order_id):
-        raise HTTPException(404, "Pedido não encontrado.")
+    staff_order(order_id, staff)
     now = time.time()
     with db() as con:
         con.execute("UPDATE orders SET wa_notified_at=?, wa_notified_by=? WHERE id=?", (now, staff["user"], order_id))
@@ -3449,14 +3519,12 @@ def admin_dashboard(days: int = 30) -> dict[str, Any]:
                 v for k, v in costs.items() if k != "shirt_cost") or any(costs["shirt_cost"].values())}
 
 
-@app.get("/api/admin/orders/{order_id}/files", dependencies=[Depends(require_staff)])
-def download_order_files(order_id: str):
+@app.get("/api/admin/orders/{order_id}/files")
+def download_order_files(order_id: str, staff: dict[str, Any] = Depends(require_staff)):
     """Arquivos do pedido num zip, baixados pelo Admin. Com o site num
     servidor, orders/, PRODUCAO_PAGA/ e SomenteDTFs/ ficam lá, não no PC
     do RIP: é por aqui que as artes chegam na produção."""
-    row = load_order(order_id)
-    if not row:
-        raise HTTPException(404, "Pedido não encontrado.")
+    row = staff_order(order_id, staff)
     if row["sale_type"] == "PREMIUM_SUB":
         raise HTTPException(400, "Pedido de premium não tem arquivos.")
     base = f"{row['order_number']}__{safe_name(row['customer_name'])}"
@@ -3469,6 +3537,8 @@ def download_order_files(order_id: str):
     report = SOMENTE_DTF_DIR / base / "RELATORIO_ARTES.txt"
     if cloud_get(report):
         files.append(report)
+    if not sees_money(staff):  # pedido.json e LEIA-ME levam o valor
+        files = [p for p in files if p.name not in MONEY_FILES]
     if not files:
         raise HTTPException(404, "Os arquivos deste pedido não estão mais no servidor.")
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
@@ -3485,16 +3555,14 @@ def download_order_files(order_id: str):
     )
 
 
-@app.get("/api/admin/orders/{order_id}/file-links", dependencies=[Depends(require_staff)])
-def order_file_links(order_id: str) -> dict[str, Any]:
+@app.get("/api/admin/orders/{order_id}/file-links")
+def order_file_links(order_id: str, staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
     """Links assinados (valem 1 hora) pra cada arquivo de produção do pedido,
     direto do Supabase Storage. É o que o sync_producao.py usa no PC da
     produção: baixa 500 MB sem passar pelo servidor do site."""
     if not STORE:
         raise HTTPException(400, "Sem Supabase Storage: use /api/admin/orders/{id}/files.")
-    row = load_order(order_id)
-    if not row:
-        raise HTTPException(404, "Pedido não encontrado.")
+    row = staff_order(order_id, staff)
     if row["sale_type"] == "PREMIUM_SUB":
         raise HTTPException(400, "Pedido de premium não tem arquivos.")
     report = SOMENTE_DTF_DIR / f"{row['order_number']}__{safe_name(row['customer_name'])}" / "RELATORIO_ARTES.txt"
@@ -3503,6 +3571,8 @@ def order_file_links(order_id: str) -> dict[str, Any]:
         if row["production_drop_path"]:
             found += STORE.list_files(Path(row["production_drop_path"]))
         found += [f for f in STORE.list_files(report.parent) if f["name"] == report.name]
+        if not sees_money(staff):
+            found = [f for f in found if f["name"] not in MONEY_FILES]
         links = [{"name": f["name"], "size": f["size"], "url": STORE.signed_download_url(f["key"])} for f in found]
     except cloud_storage.StorageError as exc:
         print(f"[storage] {exc}")
@@ -3846,7 +3916,7 @@ PUBLIC_ROUTES = {
     # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
     ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
 }
-AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_customer"}
+AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_staff_login", "require_customer"}
 
 
 def unprotected_routes() -> list[str]:
