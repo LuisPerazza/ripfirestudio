@@ -183,6 +183,11 @@ lá um atalho do `sincronizar_producao.bat`.
   Impressão (pedidos e arquivos, sem valores); Prensa (só pedidos com camiseta,
   com a foto da posição, sem valores); PC servidor (login do sync_producao.py). Admin é criado na aba Segurança, com e-mail;
   os logins do config.json podem ser desligados lá mesmo.
+- **Senhas fracas recusadas** (`password_rules.py`, mesma regra em `static/senha.js`
+  pra avisar enquanto digita): nada de sequência (abc, 123, qwerty), repetição,
+  ano/data, palavra comum de senha (senha, admin, flamengo...), troca tipo s3nh4
+  nem o próprio nome, e-mail ou usuário. Cliente: 8+ caracteres; equipe: 12+ e
+  regra mais dura. Vale ao criar ou trocar senha; senhas antigas continuam.
 - **Recuperar senha sem e-mail configurado**: o cliente pede pelo WhatsApp e o
   Admin (aba Clientes) gera o link de nova senha e envia pelo WhatsApp dele.
   Para a equipe, outro admin gera o link na aba Segurança.

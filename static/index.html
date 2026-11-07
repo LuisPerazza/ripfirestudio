@@ -280,8 +280,8 @@
           <button type="button" id="pfPasswordToggle" class="btn-line full">Trocar senha</button>
           <div id="pfPasswordForm" class="pf-password" hidden>
             <div id="pfCurrentWrap"><label for="pfCurrent">Senha atual</label><input id="pfCurrent" type="password" autocomplete="current-password"></div>
-            <label for="pfNew">Nova senha</label><input id="pfNew" type="password" autocomplete="new-password">
-            <label for="pfConfirm">Confirmar nova senha</label><input id="pfConfirm" type="password" autocomplete="new-password">
+            <label for="pfNew">Nova senha</label><input id="pfNew" type="password" autocomplete="new-password" data-personal="#pfName,#pfEmail">
+            <label for="pfConfirm">Confirmar nova senha</label><input id="pfConfirm" type="password" autocomplete="new-password" data-pw-confirm>
             <button type="button" id="pfPasswordSave" class="btn-grad full">Salvar senha</button>
             <div id="pfPassStatus" role="status" aria-live="polite"></div>
           </div>
@@ -470,7 +470,7 @@
           <form id="staffForm" class="adm-staff-form">
             <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: impressao1" autocomplete="off"></label>
             <label><span class="adm-label">E-mail (obrigatório para Admin)</span><input id="staffEmail" type="email" autocomplete="off" placeholder="nome@email.com"></label>
-            <label><span class="adm-label">Senha (mín. 12)</span><input id="staffPass" type="password" minlength="12" required autocomplete="new-password"></label>
+            <label><span class="adm-label">Senha (mín. 12)</span><input id="staffPass" type="password" minlength="12" required autocomplete="new-password" data-strength="staff" data-personal="#staffUser,#staffEmail"></label>
             <label><span class="adm-label">Papel</span><select id="staffRole"><option value="admin">Admin</option><option value="impressao">Impressão</option><option value="prensa">Prensa</option><option value="sync">PC servidor (sincronização)</option></select></label>
             <button class="primary">Adicionar</button>
           </form>
@@ -573,7 +573,7 @@
         <div id="authRegisterForm" class="auth-pane" hidden>
           <label class="sr-only" for="regName">Nome completo</label><input id="regName" placeholder="Nome completo" autocomplete="name">
           <label class="sr-only" for="regEmail">E-mail</label><input id="regEmail" placeholder="E-mail" type="email" autocomplete="email">
-          <label class="sr-only" for="regPassword">Senha (mínimo 8 caracteres)</label><input id="regPassword" placeholder="Senha (mín. 8 caracteres)" type="password" autocomplete="new-password">
+          <label class="sr-only" for="regPassword">Senha (mínimo 8 caracteres)</label><input id="regPassword" placeholder="Senha (mín. 8 caracteres)" type="password" autocomplete="new-password" data-personal="#regName,#regEmail">
           <label class="sr-only" for="regPhone">Telefone ou WhatsApp (opcional)</label><input id="regPhone" placeholder="Telefone / WhatsApp (opcional)" autocomplete="tel" inputmode="numeric" maxlength="18">
           <div class="dims-row">
             <label class="sr-only" for="regCep">CEP (opcional)</label><input id="regCep" placeholder="CEP (opcional)">
@@ -606,7 +606,7 @@
     <label><span class="adm-label">Papel</span><select id="staffEditRole"><option value="admin">Admin</option><option value="impressao">Impressão</option><option value="prensa">Prensa</option><option value="sync">PC servidor (sincronização)</option></select></label>
     <p id="staffEditRoleHint" class="adm-note" hidden>O próprio papel não muda (peça a outro admin).</p>
     <label><span class="adm-label">E-mail (obrigatório para Admin)</span><input id="staffEditEmail" type="email" autocomplete="off"></label>
-    <label><span class="adm-label">Senha nova (deixe em branco para manter)</span><input id="staffEditPass" type="password" minlength="12" autocomplete="new-password"></label>
+    <label><span class="adm-label">Senha nova (deixe em branco para manter)</span><input id="staffEditPass" type="password" minlength="12" autocomplete="new-password" data-strength="staff" data-personal="#staffEditEmail"></label>
     <button class="primary full">Salvar</button>
     <div id="staffEditStatus" role="status" aria-live="polite"></div>
   </form>
@@ -650,13 +650,13 @@
     <h2 id="resetTitle">Criar senha nova</h2>
     <p class="auth-hint" id="resetHint"></p>
     <label class="sr-only" for="resetPass1">Senha nova</label><input id="resetPass1" type="password" placeholder="Senha nova" autocomplete="new-password">
-    <label class="sr-only" for="resetPass2">Repita a senha</label><input id="resetPass2" type="password" placeholder="Repita a senha nova" autocomplete="new-password">
+    <label class="sr-only" for="resetPass2">Repita a senha</label><input id="resetPass2" type="password" placeholder="Repita a senha nova" autocomplete="new-password" data-pw-confirm>
     <button type="button" id="resetSubmitBtn" class="primary full">Salvar senha</button>
     <div id="resetStatus" role="status" aria-live="polite"></div>
   </form>
 </dialog>
 
 <script src="/static/app.js?v=71"></script>
-<script src="/static/senha.js?v=1"></script>
+<script src="/static/senha.js?v=2"></script>
 </body>
 </html>

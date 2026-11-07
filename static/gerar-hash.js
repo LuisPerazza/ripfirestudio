@@ -15,6 +15,8 @@
     const p1=$('#p1').value, p2=$('#p2').value;
     if(p1.length<12) return msg('Use pelo menos 12 caracteres.',false);
     if(p1!==p2) return msg('As duas senhas não são iguais.',false);
+    const weak=window.rfPasswordProblem&&window.rfPasswordProblem(p1,[],true);
+    if(weak) return msg(weak,false);
     $('#go').disabled=true; msg('Gerando...',true);
     try{ $('#out').value=await hashPassword(p1); $('#p1').value=''; $('#p2').value=''; msg('Pronto. Copie o hash abaixo.',true); }
     catch(e){ msg('Seu navegador não conseguiu gerar o hash.',false); }

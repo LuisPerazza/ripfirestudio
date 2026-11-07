@@ -31,9 +31,9 @@
   <p>Para colocar um login de admin no <b>config.json</b>. A senha é transformada aqui mesmo, no seu navegador: ela não é enviada para o site nem para ninguém. Cole no config.json só o resultado (o "hash").</p>
   <form id="f">
     <label for="p1">Senha nova (mínimo 12 caracteres)</label>
-    <input id="p1" type="password" autocomplete="new-password" minlength="12" required>
+    <input id="p1" type="password" autocomplete="new-password" minlength="12" required data-strength="staff">
     <label for="p2">Repita a senha</label>
-    <input id="p2" type="password" autocomplete="new-password" minlength="12" required>
+    <input id="p2" type="password" autocomplete="new-password" minlength="12" required data-pw-confirm>
     <button id="go">Gerar hash</button>
   </form>
   <div id="msg" class="msg" role="status" aria-live="polite"></div>
@@ -41,7 +41,7 @@
   <textarea id="out" readonly></textarea>
   <button type="button" id="copy">Copiar hash</button>
 </main>
-<script src="/static/gerar-hash.js?v=1"></script>
-<script src="/static/senha.js?v=1"></script>
+<script src="/static/gerar-hash.js?v=2"></script>
+<script src="/static/senha.js?v=2"></script>
 </body>
 </html>

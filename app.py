@@ -39,6 +39,7 @@ load_dotenv(BASE / ".env")
 import cloud_storage  # noqa: E402
 import dbcompat  # noqa: E402
 from dbcompat import IS_PG, db  # noqa: E402
+from password_rules import password_problem  # noqa: E402
 
 # O limite padrão do Pillow (~179 Mpx) recusava chapas de DTF acima de
 # ~2,2 m, e sem a medida da chapa o pedido não tem preço. Aqui só lemos o
@@ -438,11 +439,22 @@ def password_needs_upgrade(stored: str | None) -> bool:
     return not (len(parts) == 4 and parts[0] == PWD_SCHEME and parts[1] == str(PWD_ITERATIONS))
 
 
-def check_new_password(password: str, what: str = "A senha"):
-    if len(password) < PWD_MIN_LENGTH:
-        raise HTTPException(400, f"{what} precisa ter pelo menos {PWD_MIN_LENGTH} caracteres.")
+def check_new_password(password: str, what: str = "A senha", personal: tuple[str, ...] = (),
+                       min_length: int = 0, strong: bool = False):
+    """Tamanho e força. personal: nome, e-mail ou usuário (não podem estar na senha).
+    strong/min_length: regra mais dura da equipe (12 caracteres)."""
+    min_length = min_length or PWD_MIN_LENGTH
+    if len(password) < min_length:
+        raise HTTPException(400, f"{what} precisa ter pelo menos {min_length} caracteres.")
     if len(password) > PWD_MAX_LENGTH:
         raise HTTPException(400, f"{what} pode ter no máximo {PWD_MAX_LENGTH} caracteres.")
+    problem = password_problem(password, personal, strong=strong)
+    if problem:
+        raise HTTPException(400, problem)
+
+
+def check_staff_password_rules(password: str, *personal: str):
+    check_new_password(password, personal=tuple(personal), min_length=12, strong=True)
 
 
 # Hash de uma senha qualquer: o login confere contra ele quando o e-mail não
@@ -1727,7 +1739,7 @@ def register_customer(payload: CustomerRegister, request: Request) -> dict[str, 
 
     if "@" not in email or len(email) < 5:
         raise HTTPException(400, "E-mail inválido.")
-    check_new_password(password)
+    check_new_password(password, personal=(email, profile["full_name"]))
 
     with db() as con:
         existing = con.execute("SELECT id FROM customers WHERE email=?", (email,)).fetchone()
@@ -1915,7 +1927,8 @@ def change_password(
     customer: dict[str, Any] = Depends(require_customer),
     x_customer_token: str | None = Header(None),
 ) -> dict[str, Any]:
-    check_new_password(payload.new_password, "A nova senha")
+    check_new_password(payload.new_password, "A nova senha",
+                       personal=(customer.get("email", ""), customer.get("full_name", "")))
     # Quem entrou pelo Google não tem senha ainda: cria sem pedir a atual.
     if customer.get("password_hash"):
         fail_keys = [f"pwd:{customer['id']}"]
@@ -3258,8 +3271,7 @@ def staff_create(payload: StaffCreate, staff: dict[str, Any] = Depends(require_a
         raise HTTPException(400, "Usuário com 3 a 40 letras, números, ponto, traço ou sublinhado.")
     if payload.role not in ROLES:
         raise HTTPException(400, "Papel inválido.")
-    if len(payload.password) < 12:
-        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    check_staff_password_rules(payload.password, user, email)
     if email and not EMAIL_RE.fullmatch(email):
         raise HTTPException(400, "E-mail inválido.")
     if payload.role == "admin" and not email:
@@ -3328,8 +3340,8 @@ def staff_update(user: str, payload: StaffUpdate, staff: dict[str, Any] = Depend
     if role == "admin" and not email:
         raise HTTPException(400, "Admin precisa de e-mail (é por ele que a senha é recuperada).")
     password = payload.password or ""
-    if password and len(password) < 12:
-        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    if password:
+        check_staff_password_rules(password, user, email)
     with db() as con:
         if email and con.execute("SELECT 1 FROM staff_users WHERE email=? AND username<>?", (email, user)).fetchone():
             raise HTTPException(400, "Esse e-mail já é de outro usuário da equipe.")
@@ -3945,8 +3957,7 @@ def staff_forgot(payload: ForgotRequest, request: Request) -> dict[str, Any]:
 def staff_reset(payload: ResetRequest, request: Request) -> dict[str, Any]:
     """Troca a senha da equipe. O 2FA continua: só o e-mail não basta para entrar."""
     check_rate_limit(f"reset-ip:{client_ip(request)}", 20, 3600, "Muitas tentativas. Tente mais tarde.")
-    if len(payload.password) < 12:
-        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    check_staff_password_rules(payload.password)
     user = take_reset_token(payload.token, "staff")
     with db() as con:
         con.execute("UPDATE staff_users SET password_hash=? WHERE username=?", (hash_password(payload.password), user))
@@ -4040,6 +4051,8 @@ if __name__ == "__main__" and "--hash-senha" in sys.argv:
     first = getpass.getpass("Nova senha do admin: ")
     if len(first) < 12:
         sys.exit("Use pelo menos 12 caracteres na senha do admin.")
+    if password_problem(first, strong=True):
+        sys.exit(password_problem(first, strong=True))
     if getpass.getpass("Repita a senha: ") != first:
         sys.exit("As senhas não conferem.")
     print("\nCole no config.json (entre aspas):\n" + hash_password(first))
