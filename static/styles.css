@@ -719,3 +719,4 @@ body.is-home .theme-toggle,body.is-editor .theme-toggle,body.is-digital .theme-t
 html[data-theme="dark"] .topbar nav .nav-btn:hover,html[data-theme="dark"] .topbar nav .nav-btn:focus-visible,
 html[data-theme="dark"] .topbar nav .nav-account:hover,html[data-theme="dark"] .topbar nav .nav-account:focus-visible{
   text-shadow:1px 1px 0 #b9b9c0,2px 2px 0 #a3a3aa,3px 3px 0 #8d8d95,0 0 14px rgba(255,255,255,.6),4px 6px 18px rgba(255,255,255,.3)}
+.site-footer p.footer-company{font-size:11.5px;line-height:1.6;opacity:.75;margin-top:14px}
