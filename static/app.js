@@ -1403,10 +1403,15 @@ function openAdminLogin(msg){
 }
 // Login sem "@" é da equipe: usuário, senha e, se ligado, o código do 2FA.
 async function submitStaffLogin(user,password){
-  const code=$('#loginCode').value.trim();
+  // Só manda o código quando o campo está à vista: o preenchimento automático do
+  // navegador às vezes põe algo no campo escondido e o login acusava "código inválido".
+  const wrap=$('#loginCodeWrap'), code=wrap.hidden?'':$('#loginCode').value.trim();
   const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,password,code})});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(d.detail||'Usuário ou senha inválidos.'); // traz quantas tentativas sobram
+  if(!r.ok){
+    if(/código/i.test(d.detail||'')){ wrap.hidden=false; $('#loginCode').value=''; $('#loginCode').focus(); }
+    throw new Error(d.detail||'Usuário ou senha inválidos.'); // traz quantas tentativas sobram
+  }
   if(d.need_code){
     $('#loginCodeWrap').hidden=false; $('#loginCode').focus();
     return stat('#authStatus','Digite o código de 6 dígitos do app autenticador.',true);
