@@ -1787,7 +1787,7 @@ function renderProfileOrders(list){
       ${premium||canceled?'':orderSteps(o)}
       <div class="o-detail" id="detail_${o.id}" hidden></div>
     </article>`;
-  }).join('')||(profileData?`<div class="p-empty">${orderIcon({})}<b>Seu primeiro pedido aparece aqui</b>
+  }).join('')||(profileData?`<div class="p-empty"><span class="p-empty-shirt" aria-hidden="true"><img class="pe-light" src="/static/img/pedido-vazio-claro.png" alt="" width="60" height="60"><img class="pe-dark" src="/static/img/pedido-vazio-escuro.png" alt="" width="60" height="60"></span><b>Seu primeiro pedido aparece aqui</b>
       <span>Assim que você fizer um pedido de camisa ou DTF, ele aparece com as etapas e as fotos de posição.</span>
       <button type="button" class="btn-grad" data-go-editor>Personalizar agora</button></div>`
     :'<p class="muted-note">Carregando seus pedidos...</p>');
