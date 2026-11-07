@@ -1826,7 +1826,7 @@ function renderProfileDownloads(list){
     return `<div class="p-dl"><div class="p-dl-img">${ok?`<img src="/api/library/arts/${dl.art_id}/thumb" alt="" loading="lazy">`:''}</div>
       <div class="p-dl-body"><b>${esc(dl.art_name)}</b><small>${ok?esc(dl.category||''):'Não está mais no site'}</small>
       <button type="button" data-redl="${dl.art_id}"${ok?'':' disabled'}>Baixar de novo</button></div></div>`;
-  }).join('')||(profileData?`<div class="p-empty"><span class="p-empty-art"></span><b>Suas artes baixadas ficam aqui</b>
+  }).join('')||(profileData?`<div class="p-empty"><span class="p-empty-shirt flat" aria-hidden="true"><img class="pe-light" src="/static/img/downloads-vazio-claro.png" alt="" width="60" height="60"><img class="pe-dark" src="/static/img/downloads-vazio-escuro.png" alt="" width="60" height="60"></span><b>Suas artes baixadas ficam aqui</b>
       <span>Baixe artes grátis na aba Artes digitais e pegue de novo quando quiser.</span>
       <button type="button" class="btn-grad" data-go-digital>Ver artes grátis</button></div>`
     :'<p class="muted-note">Carregando seus downloads...</p>');
