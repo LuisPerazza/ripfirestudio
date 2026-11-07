@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=75">
-  <link rel="stylesheet" href="/static/dark.css?v=20">
+  <link rel="stylesheet" href="/static/styles.css?v=76">
+  <link rel="stylesheet" href="/static/dark.css?v=21">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -75,6 +75,7 @@
         <div id="shirtOptions" class="shirt-only">
           <label id="modelLabel">Modelo</label>
           <div id="shirtModelTabs" class="model-tabs" role="group" aria-labelledby="modelLabel"></div>
+          <div id="fabricWrap" hidden><label for="shirtFabric">Malha</label><select id="shirtFabric"></select></div>
           <label for="shirtColor">Cor</label><select id="shirtColor"></select>
           <label id="sizeLabel">Quantidades por tamanho</label><small class="size-hint" id="sizeHint">Clique no tamanho pra ver a área máxima de impressão.</small><div id="sizeGrid" role="group" aria-labelledby="sizeLabel" aria-describedby="sizeHint"></div>
         </div>
@@ -380,20 +381,25 @@
           <p class="adm-note">Com esses valores o painel calcula o custo e o lucro de cada pedido pago.</p>
           <div class="adm-cost-grid">
             <label><span>Impressão DTF por metro de rolo</span><div class="adm-money"><i>R$</i><input name="dtf_per_meter" type="number" min="0" step="0.01"></div><small>Filme, tinta e pó de 1 metro (rolo de <b id="costsRoll"></b> cm).</small></label>
-            <label><span>Prensagem por camiseta</span><div class="adm-money"><i>R$</i><input name="press_per_piece" type="number" min="0" step="0.01"></div><small>Mão de obra e energia de cada peça prensada.</small></label>
-            <label><span>Embalagem e outros por pedido</span><div class="adm-money"><i>R$</i><input name="packaging_per_order" type="number" min="0" step="0.01"></div><small>Saco, etiqueta, brinde... (um por pedido).</small></label>
-            <label><span>Taxa do pagamento</span><div class="adm-money"><input name="payment_fee_pct" type="number" min="0" max="100" step="0.01"><i>%</i></div><small>Ex.: taxa do Mercado Pago sobre o valor.</small></label>
           </div>
-          <h3 style="margin-top:22px">Valor bruto da camiseta lisa</h3>
+          <h3 style="margin-top:22px">Taxas do Mercado Pago</h3>
+          <p class="adm-note">Recebimento na hora. O site sabe por qual meio cada cliente pagou e usa a taxa certa. Pedido marcado como pago à mão (pago por fora) fica sem taxa.</p>
+          <div class="adm-cost-grid">
+            <label><span>Pix</span><div class="adm-money"><input name="fee_pix_pct" type="number" min="0" max="100" step="0.01"><i>%</i></div></label>
+            <label><span>Boleto (por boleto)</span><div class="adm-money"><i>R$</i><input name="fee_boleto_fixed" type="number" min="0" step="0.01"></div></label>
+            <label><span>Cartão e saldo Mercado Pago</span><div class="adm-money"><input name="fee_card_pct" type="number" min="0" max="100" step="0.01"><i>%</i></div></label>
+          </div>
+          <h3 style="margin-top:22px">Preço de venda da camiseta pronta</h3>
+          <p class="adm-note">Quanto o cliente paga por peça, já estampada. Muda na hora no site.</p>
           <div id="costsShirts" class="adm-cost-grid"></div>
-          <button type="submit" class="primary">Salvar custos</button>
+          <button type="submit" class="primary">Salvar</button>
           <div id="costsStatus" role="status" aria-live="polite"></div>
         </form>
         <div class="adm-card"><h3>Como o cálculo é feito</h3>
           <ul class="adm-list">
             <li><b>Somente DTF:</b> metros da chapa × custo do metro.</li>
-            <li><b>Camiseta pronta:</b> por peça, camiseta lisa do modelo + prensagem + DTF pela área das artes (área ÷ largura do rolo × custo do metro).</li>
-            <li><b>Todos:</b> + embalagem por pedido + taxa do pagamento sobre o total.</li>
+            <li><b>Camiseta pronta:</b> por peça, DTF pela área das artes (área ÷ largura do rolo × custo do metro).</li>
+            <li><b>Todos:</b> + taxa do Mercado Pago pelo meio de pagamento (Pix e cartão em % do total; boleto valor fixo).</li>
             <li><b>Premium:</b> só a taxa do pagamento.</li>
           </ul></div>
       </section>
@@ -671,7 +677,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=76"></script>
+<script src="/static/app.js?v=77"></script>
 <script src="/static/senha.js?v=3"></script>
 </body>
 </html>

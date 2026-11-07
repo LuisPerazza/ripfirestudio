@@ -775,3 +775,4 @@ dialog.placement-modal{width:min(980px,94vw)}
 .price-card #priceNote[hidden]{display:none}
 .ppanel-actions{display:flex;gap:14px;align-items:center}
 #admClearCanceled{margin-left:auto}
+#admin .adm-money input:first-child{padding-left:12px}

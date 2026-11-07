@@ -333,6 +333,9 @@ def init_db():
             # O cliente apagou do histórico dele um pedido cancelado que teve pagamento
             # (a loja continua vendo; o não pago some de vez).
             con.execute("ALTER TABLE orders ADD COLUMN customer_hidden INTEGER NOT NULL DEFAULT 0")
+        if "payment_method" not in cols:
+            # pix, boleto ou cartao (vem do Mercado Pago): define a taxa no custo.
+            con.execute("ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT ''")
         if "wa_notified_at" not in cols:
             # Quando a equipe mandou o "recebemos seu pedido" pelo WhatsApp, e quem mandou.
             con.execute("ALTER TABLE orders ADD COLUMN wa_notified_at REAL NOT NULL DEFAULT 0")
@@ -1091,6 +1094,40 @@ def write_dtf_report(order_number: str, customer_name: str, sources: list[dict[s
     return report_path
 
 
+# ---------- Preço de venda da camiseta pronta ----------
+# Preço fechado por peça (camiseta + estampa). Modelo com "fabrics" tem um
+# preço por malha (a Regular: Cotton e Algodão). O Admin muda os valores na
+# aba Custos (tabela settings, chave shirt_prices); estes são o padrão.
+SHIRT_PRICE_DEFAULTS: dict[str, Any] = {
+    "regular": {"fabrics": [{"id": "cotton", "name": "Cotton", "price": 69.99},
+                            {"id": "algodao", "name": "Algodão", "price": 59.99}]},
+    "oversized": {"price": 79.99},
+    "babylook": {"price": 49.99},
+    "infantil": {"price": 49.99},
+}
+
+
+def shirt_prices() -> dict[str, Any]:
+    saved = json.loads(get_setting("shirt_prices") or "{}")
+    out: dict[str, Any] = {}
+    for m in CONFIG.get("shirt_models") or []:
+        base = SHIRT_PRICE_DEFAULTS.get(m["id"]) or {"price": float(m.get("base_price") or 0)}
+        mine = saved.get(m["id"]) or {}
+        if base.get("fabrics"):
+            got = {f["id"]: f for f in mine.get("fabrics") or []}
+            out[m["id"]] = {"fabrics": [{**f, "price": float(got.get(f["id"], {}).get("price", f["price"]))}
+                                        for f in base["fabrics"]]}
+        else:
+            out[m["id"]] = {"price": float(mine.get("price", base.get("price") or 0))}
+    return out
+
+
+def shirt_models() -> list[dict[str, Any]]:
+    """Modelos do config.json com o preço de venda (e as malhas) de agora."""
+    prices = shirt_prices()
+    return [{**m, **prices.get(m["id"], {})} for m in CONFIG.get("shirt_models") or []]
+
+
 def premium_dtf_discount() -> float:
     """Desconto (%) no metro do DTF pra quem tem premium ativo. Padrão 10."""
     pct = digital_cfg().get("premium_dtf_discount_pct")
@@ -1138,7 +1175,7 @@ def calc_order_total(
 
     # Camiseta (FINISHED_SHIRT / DTF_PLUS_SHIRT): preço por peça.
     product = data.get("product") or {}
-    models = CONFIG.get("shirt_models") or []
+    models = shirt_models()
     model = (
         next((m for m in models if m["id"] == product.get("shirt_model_id")), None)
         or next((m for m in models if m["name"] == product.get("shirt_model")), None)
@@ -1160,9 +1197,19 @@ def calc_order_total(
     product["sizes"] = sizes
     data["product"] = product
     data["dtf_quantity"] = qty
-    unit = float(pricing.get("dtf_only_unit", 0)) + float(model.get("base_price", 0))
     if sale_type == "FINISHED_SHIRT":
-        unit += float(pricing.get("finished_press_unit", 0))
+        unit = float(model.get("price") or 0)
+        if model.get("fabrics"):
+            fabric = next((f for f in model["fabrics"] if f["id"] == product.get("fabric_id")), None)
+            if not fabric:
+                raise HTTPException(400, f"Escolha a malha da camiseta {model['name']}.")
+            unit = float(fabric["price"])
+            product["fabric"] = fabric["name"]
+            product["shirt_model"] = f"{model['name']} {fabric['name']}"
+        if unit <= 0:
+            raise HTTPException(400, "Este modelo ainda está sem preço. Fale com a loja.")
+        return round(qty * unit, 2)
+    unit = float(pricing.get("dtf_only_unit", 0)) + float(model.get("base_price", 0))
     return round(qty * unit, 2)
 
 
@@ -1290,15 +1337,15 @@ def cancel_stale_orders():
         )
 
 
-def mark_order_paid(order_id: str, payment_ref: str | None = None) -> str | None:
+def mark_order_paid(order_id: str, payment_ref: str | None = None, method: str = "") -> str | None:
     """Pagamento aprovado (Admin, webhook ou retorno do Mercado Pago). Só o
     primeiro aviso muda o status: o provedor repete o webhook, e um pedido
     já pronto não pode voltar pra "pagamento aprovado"."""
     with db() as con:
         newly_paid = con.execute(
             """UPDATE orders SET payment_status='PAID', status='PAGAMENTO_APROVADO',
-               payment_ref=COALESCE(?, payment_ref) WHERE id=? AND payment_status!='PAID'""",
-            (payment_ref, order_id)
+               payment_ref=COALESCE(?, payment_ref), payment_method=? WHERE id=? AND payment_status!='PAID'""",
+            (payment_ref, method, order_id)
         ).rowcount
     if newly_paid:
         # Em segundo plano: o webhook do Mercado Pago tem 22 s pra receber o 200.
@@ -1415,6 +1462,15 @@ def mp_request(method: str, path: str, body: dict[str, Any] | None = None, missi
         raise HTTPException(502, "Não foi possível falar com o Mercado Pago. Tente de novo em instantes.")
 
 
+def mp_payment_method(payment: dict[str, Any]) -> str:
+    kind, method = payment.get("payment_type_id") or "", payment.get("payment_method_id") or ""
+    if method == "pix" or kind == "bank_transfer":
+        return "pix"
+    if kind == "ticket":
+        return "boleto"
+    return "cartao" if kind else ""
+
+
 def apply_mp_payment(payment: dict[str, Any]) -> bool:
     """Libera o pedido de um pagamento buscado na API do Mercado Pago (nunca
     o que veio no corpo do webhook, que qualquer um pode forjar), se estiver
@@ -1428,7 +1484,7 @@ def apply_mp_payment(payment: dict[str, Any]) -> bool:
     if payment.get("currency_id") != "BRL" or paid + 0.01 < float(row["total"]):
         print(f"[mercadopago] pagamento {payment.get('id')} de {paid} não cobre o pedido {row['order_number']} ({row['total']})")
         return False
-    mark_order_paid(row["id"], str(payment.get("id") or "") or None)
+    mark_order_paid(row["id"], str(payment.get("id") or "") or None, mp_payment_method(payment))
     return True
 
 
@@ -1727,7 +1783,7 @@ def get_config() -> dict[str, Any]:
         "max_print_width_cm": CONFIG.get("max_print_width_cm"),
         "max_print_height_cm": CONFIG.get("max_print_height_cm"),
         "dpi": CONFIG.get("dpi"),
-        "shirt_models": CONFIG.get("shirt_models"),
+        "shirt_models": shirt_models(),
         "shirt_colors": CONFIG.get("shirt_colors"),
         "sizes": CONFIG.get("sizes"),
         "size_print_limits": CONFIG.get("size_print_limits"),
@@ -3159,7 +3215,7 @@ def list_orders(staff: dict[str, Any] = Depends(require_staff)) -> list[dict[str
         rows = con.execute(
             """SELECT id,order_number,created_at,customer_name,customer_email,customer_whatsapp,
                       sale_type,status,payment_status,total,folder_path,production_drop_path,
-                      data_json,stage,stage_at,stage_by,payment_ref,wa_notified_at,wa_notified_by,
+                      data_json,stage,stage_at,stage_by,payment_ref,payment_method,wa_notified_at,wa_notified_by,
                       cancel_by,cancel_at,cancel_reason
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
@@ -3537,10 +3593,10 @@ def mark_wa_notified(order_id: str, staff: dict[str, Any] = Depends(require_staf
 # painel calcula o custo e o lucro de cada pedido pago.
 DEFAULT_COSTS: dict[str, Any] = {
     "dtf_per_meter": 0.0,      # impressão DTF: custo por metro do rolo (filme, tinta, pó)
-    "press_per_piece": 0.0,    # prensagem / mão de obra por camiseta
-    "packaging_per_order": 0.0,  # embalagem e outros custos fixos por pedido
-    "payment_fee_pct": 0.0,    # taxa do meio de pagamento (% do valor)
-    "shirt_cost": {},          # valor bruto da camiseta lisa por modelo (id -> R$)
+    # Taxas do Mercado Pago (recebimento na hora), pelo meio que o cliente usou:
+    "fee_pix_pct": 0.99,
+    "fee_boleto_fixed": 3.49,  # R$ por boleto
+    "fee_card_pct": 4.99,      # cartão de crédito/débito e saldo do Mercado Pago
 }
 
 
@@ -3548,68 +3604,80 @@ def get_costs() -> dict[str, Any]:
     with db() as con:
         row = con.execute("SELECT value FROM settings WHERE key='costs'").fetchone()
     saved = json.loads(row["value"]) if row else {}
-    costs = {**DEFAULT_COSTS, **{k: v for k, v in saved.items() if k in DEFAULT_COSTS}}
-    costs["shirt_cost"] = {m["id"]: float((saved.get("shirt_cost") or {}).get(m["id"]) or 0)
-                           for m in CONFIG.get("shirt_models") or []}
-    return costs
+    return {**DEFAULT_COSTS, **{k: float(v) for k, v in saved.items() if k in DEFAULT_COSTS}}
+
+
+def payment_fee(row: dict[str, Any], costs: dict[str, Any]) -> float:
+    """Taxa do Mercado Pago pelo meio de pagamento. Pago por fora (marcado no Admin): sem taxa."""
+    total, method = float(row["total"] or 0), row.get("payment_method") or ""
+    if method == "pix":
+        return total * float(costs["fee_pix_pct"]) / 100
+    if method == "boleto":
+        return float(costs["fee_boleto_fixed"])
+    if method == "cartao":
+        return total * float(costs["fee_card_pct"]) / 100
+    return 0.0
 
 
 def order_cost(row: dict[str, Any], data: dict[str, Any], costs: dict[str, Any]) -> float:
-    """Custo estimado do pedido com os valores da aba Custos."""
+    """Custo do pedido: a impressão DTF (metros de rolo) e a taxa do pagamento."""
     sale = row["sale_type"]
-    total = float(row["total"] or 0)
-    fee = total * float(costs.get("payment_fee_pct") or 0) / 100
+    fee = payment_fee(row, costs)
     if sale in ("PREMIUM_SUB", "DIGITAL_ART"):
         return round(fee, 2)
     dpi = float(CONFIG.get("dpi") or 300)
     per_m = float(costs.get("dtf_per_meter") or 0)
     roll_m = float(CONFIG.get("dtf_sheet_width_cm") or 58.5) / 100
-    cost = fee + float(costs.get("packaging_per_order") or 0)
     if sale == "DTF_ONLY":
         art = data.get("production_art") or {}
-        h_cm = (art.get("height_px") or 0) / dpi * 2.54
-        meters = h_cm / 100  # o que gasta de rolo é o tamanho real da chapa (o mínimo é só regra de preço)
-        return round(cost + meters * per_m, 2)
-    # Camiseta: camisa lisa + prensagem por peça + DTF pela área das artes
-    # (área ÷ largura do rolo = metros de rolo que a arte ocupa).
+        meters = (art.get("height_px") or 0) / dpi * 2.54 / 100  # o rolo gasto é o tamanho real da chapa
+        return round(fee + meters * per_m, 2)
+    # Camiseta: DTF pela área das artes (área ÷ largura do rolo = metros de rolo).
     qty = int(data.get("dtf_quantity") or 0)
-    model = (data.get("product") or {}).get("shirt_model_id") or ""
-    shirt = float((costs.get("shirt_cost") or {}).get(model) or 0)
     area_m2 = 0.0
     for key in ("production_art", "production_art_back", "production_art_sleeve_right", "production_art_sleeve_left"):
         art = data.get(key) or {}
         if art.get("width_px") and art.get("height_px"):
             area_m2 += (art["width_px"] / dpi * 0.0254) * (art["height_px"] / dpi * 0.0254)
     dtf = area_m2 / roll_m * per_m if roll_m else 0
-    return round(cost + qty * (shirt + float(costs.get("press_per_piece") or 0) + dtf), 2)
+    return round(fee + qty * dtf, 2)
 
 
 @app.get("/api/admin/costs", dependencies=[Depends(require_admin)])
 def admin_get_costs() -> dict[str, Any]:
-    return {"costs": get_costs(), "models": [{"id": m["id"], "name": m["name"]} for m in CONFIG.get("shirt_models") or []]}
+    return {"costs": get_costs(), "models": shirt_models()}
+
+
+def _money_num(v: Any, what: str = "valores") -> float:
+    try:
+        x = float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Use só números nos {what}.")
+    if not 0 <= x <= 1_000_000:
+        raise HTTPException(400, "Valor fora do esperado.")
+    return round(x, 2)
 
 
 @app.put("/api/admin/costs", dependencies=[Depends(require_admin)])
 def admin_save_costs(payload: dict[str, Any]) -> dict[str, Any]:
-    def num(v: Any) -> float:
-        try:
-            x = float(str(v).replace(",", "."))
-        except (TypeError, ValueError):
-            raise HTTPException(400, "Use só números nos custos.")
-        if not 0 <= x <= 1_000_000:
-            raise HTTPException(400, "Valor de custo fora do esperado.")
-        return round(x, 2)
-    costs = {k: num(payload.get(k, 0)) for k in DEFAULT_COSTS if k != "shirt_cost"}
-    if costs["payment_fee_pct"] > 100:
-        raise HTTPException(400, "A taxa do pagamento vai de 0 a 100%.")
-    sent = payload.get("shirt_cost") or {}
-    costs["shirt_cost"] = {m["id"]: num(sent.get(m["id"], 0)) for m in CONFIG.get("shirt_models") or []}
-    with db() as con:
-        con.execute(
-            "INSERT INTO settings (key,value) VALUES('costs',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (json.dumps(costs),)
-        )
-    return {"ok": True, "costs": get_costs()}
+    costs = {k: _money_num(payload.get(k, DEFAULT_COSTS[k]), "custos") for k in DEFAULT_COSTS}
+    if costs["fee_pix_pct"] > 100 or costs["fee_card_pct"] > 100:
+        raise HTTPException(400, "A taxa vai de 0 a 100%.")
+    set_setting("costs", json.dumps(costs))
+    # Preço de venda das camisetas prontas (vem junto, na mesma aba).
+    sent = payload.get("shirt_prices")
+    if isinstance(sent, dict):
+        clean: dict[str, Any] = {}
+        for m in shirt_models():
+            got = sent.get(m["id"]) or {}
+            if m.get("fabrics"):
+                fab = {f.get("id"): f for f in got.get("fabrics") or [] if isinstance(f, dict)}
+                clean[m["id"]] = {"fabrics": [{"id": f["id"], "price": _money_num(fab.get(f["id"], {}).get("price", f["price"]), "preços")}
+                                              for f in m["fabrics"]]}
+            else:
+                clean[m["id"]] = {"price": _money_num(got.get("price", m.get("price") or 0), "preços")}
+        set_setting("shirt_prices", json.dumps(clean))
+    return {"ok": True, "costs": get_costs(), "models": shirt_models()}
 
 
 # ---------- Clientes (Admin) ----------
@@ -3681,7 +3749,7 @@ def admin_dashboard(days: int = 30) -> dict[str, Any]:
             f"SELECT {day_expr} AS day, COUNT(*) AS n FROM customers WHERE created_at >= ? GROUP BY 1",
             (since_ts,))]
         orders = [dict(r) for r in con.execute(
-            f"""SELECT {day_expr} AS day, sale_type, payment_status, status, stage, total, data_json
+            f"""SELECT {day_expr} AS day, sale_type, payment_status, status, stage, total, data_json, payment_method
                 FROM orders WHERE created_at >= ?""", (since_ts,))]
         totals = con.execute(
             """SELECT (SELECT COUNT(*) FROM customers) AS customers,
@@ -3699,8 +3767,7 @@ def admin_dashboard(days: int = 30) -> dict[str, Any]:
         o["cost"] = order_cost(o, data, costs) if o["payment_status"] == "PAID" else 0
         out_orders.append(o)
     return {"days": days, "since": since_day, "hits": hits, "signups": signups, "orders": out_orders,
-            "totals": dict(totals), "costs_set": any(
-                v for k, v in costs.items() if k != "shirt_cost") or any(costs["shirt_cost"].values())}
+            "totals": dict(totals), "costs_set": bool(costs.get("dtf_per_meter"))}
 
 
 @app.get("/api/admin/orders/{order_id}/files")

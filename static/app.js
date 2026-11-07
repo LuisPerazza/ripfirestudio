@@ -454,8 +454,10 @@ function fillConfig(){
   $$('#shirtModelTabs [data-model]').forEach(b=>b.onclick=()=>{
     currentModel=b.dataset.model;
     $$('#shirtModelTabs [data-model]').forEach(x=>x.classList.toggle('active',x===b));
-    renderSizeGrid();updateShirtVisual();updatePrice();render();
+    renderFabrics();renderSizeGrid();updateShirtVisual();updatePrice();render();
   });
+  $('#shirtFabric').onchange=updatePrice;
+  renderFabrics();
   $('#shirtColor').innerHTML=CONFIG.shirt_colors.map(x=>`<option>${x}</option>`).join('');
   $('#mockupModel').innerHTML=CONFIG.shirt_models.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
   $('#mockupColor').innerHTML=CONFIG.shirt_colors.map(x=>`<option>${x}</option>`).join('');
@@ -553,6 +555,19 @@ function toggleSale(){
   if(isGang) renderGangCanvas();
   else positionPrintArea();
 }
+// Malha (só modelos com mais de uma, ex.: Regular Cotton / Algodão), cada uma com seu preço.
+function renderFabrics(){
+  const m=chosenModel(), fabs=(m&&m.fabrics)||[];
+  $('#fabricWrap').hidden=!fabs.length;
+  const keep=$('#shirtFabric').value;
+  $('#shirtFabric').innerHTML=fabs.map(f=>`<option value="${f.id}">${esc(f.name)} · ${money(f.price)}</option>`).join('');
+  if(fabs.some(f=>f.id===keep)) $('#shirtFabric').value=keep;
+}
+function shirtUnitPrice(){
+  const m=chosenModel(); if(!m) return 0;
+  if(m.fabrics&&m.fabrics.length){ const f=m.fabrics.find(x=>x.id===$('#shirtFabric').value)||m.fabrics[0]; return Number(f.price)||0; }
+  return Number(m.price)||0;
+}
 function chosenModel(){return CONFIG.shirt_models.find(x=>x.id===currentModel)||CONFIG.shirt_models[0]}
 // Cada modelo pode ter a própria lista de tamanhos no config.json (o infantil
 // usa 2 a 16); sem lista, vale a geral (P, M, G...).
@@ -578,7 +593,7 @@ function updatePrice(){
   if(dtf){$('#priceTotal').textContent=money(calcGangTotal());return}
   $('#priceTotal').textContent=money(calcTotal());
 }
-function calcTotal(){const q=shirtQty(),t=$('#saleType').value,p=CONFIG.pricing,m=chosenModel();if(t==='DTF_ONLY')return q*p.dtf_only_unit;if(t==='DTF_PLUS_SHIRT')return q*(p.dtf_only_unit+m.base_price);return q*(p.dtf_only_unit+m.base_price+p.finished_press_unit)}
+function calcTotal(){const q=shirtQty(),t=$('#saleType').value,p=CONFIG.pricing,m=chosenModel();if(t==='DTF_ONLY')return q*p.dtf_only_unit;if(t==='DTF_PLUS_SHIRT')return q*(p.dtf_only_unit+m.base_price);return q*shirtUnitPrice()}
 
 /* ---------- Mockup 3D da camiseta (SVG, gerado por parâmetros) ---------- */
 const SHIRT_COLOR_HEX={'Preto':'#161616','Branco':'#f7f6f2','Off White':'#e9e2d0','Marrom':'#4a3324'};
@@ -1347,7 +1362,7 @@ async function createOrder(){
     const data={
       sale_type:type,
       customer:customerPayload(),
-      product:type==='DTF_ONLY'?null:{shirt_model:chosenModel().name,shirt_model_id:chosenModel().id,color:$('#shirtColor').value,sizes:sizeMap()},
+      product:type==='DTF_ONLY'?null:{shirt_model:chosenModel().name,shirt_model_id:chosenModel().id,fabric_id:chosenModel().fabrics?$('#shirtFabric').value:undefined,color:$('#shirtColor').value,sizes:sizeMap()},
       dtf_quantity:shirtQty(),
       design:{width_cm:main.widthCm,height_cm:main.heightCm,dpi:main.dpi,width_px:main.widthPx,height_px:main.heightPx},
       has_front:!!front, has_back:!!back,
@@ -2385,21 +2400,28 @@ async function showResetLink(url,whoLabel){
 }
 
 /* ---------- Custos ---------- */
+const COST_KEYS=['dtf_per_meter','fee_pix_pct','fee_boleto_fixed','fee_card_pct'];
 async function loadCosts(){
   let d; try{ d=await admFetch('/api/admin/costs'); }catch(e){ return stat('#costsStatus',e.message,false); }
   const f=$('#costsForm');
-  ['dtf_per_meter','press_per_piece','packaging_per_order','payment_fee_pct'].forEach(k=>f.elements[k].value=d.costs[k]||'');
+  COST_KEYS.forEach(k=>f.elements[k].value=d.costs[k]??'');
   $('#costsRoll').textContent=fmtCm(sheetWidthCm());
-  $('#costsShirts').innerHTML=d.models.map(m=>`<label><span>${esc(m.name)}</span><div class="adm-money"><i>R$</i>
-    <input type="number" min="0" step="0.01" data-shirt="${m.id}" value="${d.costs.shirt_cost[m.id]||''}"></div></label>`).join('');
+  const field=(label,attrs,val)=>`<label><span>${esc(label)}</span><div class="adm-money"><i>R$</i><input type="number" min="0" step="0.01" ${attrs} value="${val??''}"></div></label>`;
+  $('#costsShirts').innerHTML=d.models.map(m=>m.fabrics
+    ?m.fabrics.map(fb=>field(`${m.name} ${fb.name}`,`data-shirt="${m.id}" data-fabric="${fb.id}"`,fb.price)).join('')
+    :field(m.name,`data-shirt="${m.id}"`,m.price)).join('');
 }
 async function saveCosts(ev){
   ev.preventDefault();
-  const f=ev.currentTarget, body={shirt_cost:{}};
-  ['dtf_per_meter','press_per_piece','packaging_per_order','payment_fee_pct'].forEach(k=>body[k]=f.elements[k].value||0);
-  $$('#costsShirts [data-shirt]').forEach(i=>body.shirt_cost[i.dataset.shirt]=i.value||0);
-  try{ await admFetch('/api/admin/costs',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    stat('#costsStatus','Custos salvos. O painel já usa os valores novos.',true); ADM.dash=null; }
+  const f=ev.currentTarget, body={shirt_prices:{}};
+  COST_KEYS.forEach(k=>body[k]=f.elements[k].value||0);
+  $$('#costsShirts [data-shirt]').forEach(i=>{
+    const m=body.shirt_prices[i.dataset.shirt]||(body.shirt_prices[i.dataset.shirt]={});
+    if(i.dataset.fabric) (m.fabrics||(m.fabrics=[])).push({id:i.dataset.fabric,price:i.value||0}); else m.price=i.value||0;
+  });
+  try{ const d=await admFetch('/api/admin/costs',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    CONFIG.shirt_models=d.models; if(typeof updatePrice==='function') updatePrice();
+    stat('#costsStatus','Salvo. O painel e os preços do site já usam os valores novos.',true); ADM.dash=null; }
   catch(e){ stat('#costsStatus',e.message,false); }
 }
 
