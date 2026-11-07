@@ -758,3 +758,4 @@ dialog.placement-modal{width:min(980px,94vw)}
 .adm-actions .adm-pos-btn{margin-right:6px}
 
 .adm-staff-edit label{display:block;margin:10px 0}.adm-staff-edit label input,.adm-staff-edit label select{width:100%;margin-top:4px}
+.adm-edit-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}

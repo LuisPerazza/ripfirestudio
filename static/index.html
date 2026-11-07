@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=69">
+  <link rel="stylesheet" href="/static/styles.css?v=70">
   <link rel="stylesheet" href="/static/dark.css?v=15">
   <script src="/static/theme.js?v=1"></script>
 </head>
@@ -612,6 +612,24 @@
   </form>
 </dialog>
 
+<dialog id="custEditModal">
+  <form id="custEditForm" class="modal-card auth-card adm-staff-edit">
+    <button type="button" id="custEditClose" class="close" aria-label="Fechar">×</button>
+    <h2 id="custEditTitle">Editar cliente</h2>
+    <label><span class="adm-label">Nome completo</span><input id="custEditName" required></label>
+    <label><span class="adm-label">E-mail (é o login)</span><input id="custEditEmail" type="email" required autocomplete="off"></label>
+    <p id="custEditGoogle" class="adm-note" hidden>Conta ligada ao Google: o "Entrar com Google" continua funcionando mesmo trocando o e-mail.</p>
+    <label><span class="adm-label">WhatsApp</span><input id="custEditPhone" inputmode="numeric" maxlength="18"></label>
+    <div class="adm-edit-row">
+      <label><span class="adm-label">CEP</span><input id="custEditCep" inputmode="numeric" maxlength="9"></label>
+      <label><span class="adm-label">Número</span><input id="custEditNumber" maxlength="20"></label>
+    </div>
+    <label><span class="adm-label">CPF/CNPJ</span><input id="custEditDoc" inputmode="numeric" maxlength="18"></label>
+    <button class="primary full">Salvar</button>
+    <div id="custEditStatus" role="status" aria-live="polite"></div>
+  </form>
+</dialog>
+
 <dialog id="resetLinkModal">
   <form method="dialog" class="modal-card auth-card">
     <button class="close" value="cancel" aria-label="Fechar">×</button>
@@ -638,7 +656,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=70"></script>
+<script src="/static/app.js?v=71"></script>
 <script src="/static/senha.js?v=1"></script>
 </body>
 </html>

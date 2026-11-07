@@ -2099,6 +2099,12 @@ def delete_my_account(payload: AccountDelete, customer: dict[str, Any] = Depends
         login_guard(fail_keys)
         if not verify_password(payload.password, customer["password_hash"]):
             login_failed(fail_keys, "Senha incorreta.", 400)
+    return {"ok": True, "deleted_unpaid_orders": delete_customer_account(customer)}
+
+
+def delete_customer_account(customer: dict[str, Any]) -> int:
+    """Apaga a conta (pelo próprio cliente ou pelo Admin): sessões, downloads e
+    pedidos não pagos com os arquivos. Pedidos pagos ficam (obrigação fiscal)."""
     with db() as con:
         unpaid = [dict(o) for o in customer_orders(con, customer) if o["payment_status"] != "PAID"]
         con.executemany("DELETE FROM orders WHERE id=?", [(o["id"],) for o in unpaid])
@@ -2115,7 +2121,7 @@ def delete_my_account(payload: AccountDelete, customer: dict[str, Any] = Depends
         shutil.rmtree(report_dir, ignore_errors=True)
         cloud_delete_dir(report_dir)
     cleanup_staged_uploads(customer["id"], max_age=0)
-    return {"ok": True, "deleted_unpaid_orders": len(unpaid)}
+    return len(unpaid)
 
 
 @app.get("/api/admin/lgpd/requests", dependencies=[Depends(require_admin)])
@@ -3517,6 +3523,7 @@ def admin_customers() -> list[dict[str, Any]]:
     with db() as con:
         rows = con.execute(
             """SELECT c.id, c.created_at, c.email, c.full_name, c.phone, c.premium_until,
+                      c.cep, c.address_number, c.document,
                       CASE WHEN c.google_sub IS NULL THEN 0 ELSE 1 END AS google,
                       (SELECT COUNT(*) FROM orders o WHERE o.customer_id=c.id) AS orders,
                       (SELECT COALESCE(SUM(o.total),0) FROM orders o
@@ -3524,6 +3531,42 @@ def admin_customers() -> list[dict[str, Any]]:
                FROM customers c ORDER BY c.created_at DESC"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+class AdminCustomerUpdate(BaseModel):
+    full_name: str
+    email: str
+    phone: str = ""
+    cep: str = ""
+    address_number: str = ""
+    document: str = ""
+
+
+@app.patch("/api/admin/customers/{customer_id}", dependencies=[Depends(require_admin)])
+def admin_update_customer(customer_id: str, payload: AdminCustomerUpdate) -> dict[str, Any]:
+    profile = clean_profile(payload.full_name, payload.phone, payload.cep, payload.address_number, payload.document)
+    email = payload.email.strip().lower()
+    if not EMAIL_RE.fullmatch(email):
+        raise HTTPException(400, "E-mail inválido.")
+    with db() as con:
+        if not con.execute("SELECT 1 FROM customers WHERE id=?", (customer_id,)).fetchone():
+            raise HTTPException(404, "Cliente não encontrado.")
+        if con.execute("SELECT 1 FROM customers WHERE lower(email)=? AND id<>?", (email, customer_id)).fetchone():
+            raise HTTPException(400, "Esse e-mail já é de outra conta.")
+        con.execute(
+            "UPDATE customers SET full_name=?, email=?, phone=?, cep=?, address_number=?, document=? WHERE id=?",
+            (profile["full_name"], email, profile["phone"], profile["cep"], profile["address_number"],
+             profile["document"], customer_id))
+    return {"ok": True}
+
+
+@app.delete("/api/admin/customers/{customer_id}", dependencies=[Depends(require_admin)])
+def admin_delete_customer(customer_id: str) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute("SELECT * FROM customers WHERE id=?", (customer_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Cliente não encontrado.")
+    return {"ok": True, "deleted_unpaid_orders": delete_customer_account(dict(row))}
 
 
 # ---------- Painel (Admin) ----------

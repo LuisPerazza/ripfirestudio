@@ -2258,14 +2258,47 @@ function renderCustomers(){
       <td>${fmtDate(c.created_at)}</td>
       <td>${c.premium_until>now?`<span class="adm-pill st-PREMIUM">até ${fmtDate(c.premium_until)}</span>`:c.premium_until?'<small>vencido</small>':'–'}</td>
       <td>${c.orders}</td><td>${money(c.spent)}</td>
-      <td class="adm-actions"><button type="button" class="adm-btn sm" data-resetlink="${c.id}" title="Para quem esqueceu a senha: o link vai pelo seu WhatsApp">Link de nova senha</button></td></tr>`}).join('')}</tbody></table>`
+      <td class="adm-actions"><button type="button" class="adm-btn sm" data-custedit="${c.id}">Editar</button>
+        <button type="button" class="adm-btn sm" data-resetlink="${c.id}" title="Para quem esqueceu a senha: o link vai pelo seu WhatsApp">Link de nova senha</button>
+        <button type="button" class="adm-btn sm danger" data-custdel="${c.id}">Excluir</button></td></tr>`}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.customers.length?'Nenhum cliente encontrado.':'Nenhuma conta criada ainda.'}</p>`;
+  $$('#customersTable [data-custedit]').forEach(b=>b.onclick=()=>openCustomerEdit(ADM.customers.find(x=>x.id===b.dataset.custedit)));
+  $$('#customersTable [data-custdel]').forEach(b=>b.onclick=()=>deleteCustomer(ADM.customers.find(x=>x.id===b.dataset.custdel)));
   $$('#customersTable [data-resetlink]').forEach(b=>b.onclick=()=>{
     const c=ADM.customers.find(x=>x.id===b.dataset.resetlink);
     showResetLink(`/api/admin/customers/${encodeURIComponent(b.dataset.resetlink)}/reset-link`,c?c.full_name:'o cliente');
   });
 }
 
+// Editar e excluir conta de cliente (Admin).
+function openCustomerEdit(c){
+  if(!c) return;
+  $('#custEditTitle').textContent=`Editar ${c.full_name}`;
+  $('#custEditName').value=c.full_name||''; $('#custEditEmail').value=c.email||'';
+  $('#custEditPhone').value=c.phone?formatPhoneBR(c.phone):''; $('#custEditCep').value=c.cep||'';
+  $('#custEditNumber').value=c.address_number||''; $('#custEditDoc').value=c.document||'';
+  $('#custEditGoogle').hidden=!c.google;
+  $('#custEditStatus').textContent=''; $('#custEditStatus').className='';
+  $('#custEditClose').onclick=()=>$('#custEditModal').close();
+  $('#custEditForm').onsubmit=async ev=>{
+    ev.preventDefault();
+    const body={full_name:$('#custEditName').value.trim(),email:$('#custEditEmail').value.trim(),phone:$('#custEditPhone').value.trim(),
+      cep:$('#custEditCep').value.trim(),address_number:$('#custEditNumber').value.trim(),document:$('#custEditDoc').value.trim()};
+    try{ await admFetch(`/api/admin/customers/${encodeURIComponent(c.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      $('#custEditModal').close(); loadCustomers(); }
+    catch(e){ stat('#custEditStatus',e.message,false); }
+  };
+  $('#custEditModal').showModal();
+}
+async function deleteCustomer(c){
+  if(!c) return;
+  const typed=prompt(`Excluir a conta de ${c.full_name} (${c.email})?\n\nIsso não tem volta: some a conta e os pedidos NÃO pagos. Pedidos pagos ficam guardados (obrigação fiscal).\n\nDigite EXCLUIR para confirmar:`);
+  if(typed==null) return;
+  if(typed.trim().toUpperCase()!=='EXCLUIR') return alert('Não excluído: era preciso digitar EXCLUIR.');
+  try{ const d=await admFetch(`/api/admin/customers/${encodeURIComponent(c.id)}`,{method:'DELETE'});
+    alert(`Conta excluída.${d.deleted_unpaid_orders?` ${d.deleted_unpaid_orders} pedido(s) não pago(s) apagado(s).`:''}`); loadCustomers(); }
+  catch(e){ alert(e.message); }
+}
 // Link de nova senha (cliente ou equipe) para mandar pelo WhatsApp do Admin.
 async function showResetLink(url,whoLabel){
   let d;
