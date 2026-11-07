@@ -424,6 +424,12 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) .topbar nav .nav-btn::after,:where(html[data-theme="dark"]) .topbar nav .nav-account::after{background:rgba(255,255,255,1);box-shadow:1px 1px 0 #8d8d95,2px 3px 5px rgba(0,0,0,.5)}
 :where(html[data-theme="dark"]) .topbar nav .nav-btn:hover,:where(html[data-theme="dark"]) .topbar nav .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar nav .nav-account:hover,:where(html[data-theme="dark"]) .topbar nav .nav-account:focus-visible{box-shadow:none}
 :where(html[data-theme="dark"]) .topbar nav .nav-btn:focus-visible,:where(html[data-theme="dark"]) .topbar nav .nav-account:focus-visible{outline:2px solid rgba(255,255,255,.85)}
+:where(html[data-theme="dark"]) .site-footer .footer-legal{border:0}
+:where(html[data-theme="dark"]) .site-footer .footer-legal a{color:#f0f0f0}
+:where(html[data-theme="dark"]) .site-footer .footer-center small{color:#c8c8c8}
+:where(html[data-theme="dark"]) .site-footer .footer-links a{color:#f0f0f0}
+:where(html[data-theme="dark"]) .site-footer .footer-links a:hover{color:#fff;border-color:var(--accent)}
+:where(html[data-theme="dark"]) body.is-home .site-footer{background:linear-gradient(to top,rgba(5,5,5,.7),rgba(5,5,5,0))}
 /* Ajustes à mão do tema escuro (o gerador cola isto no fim do dark.css). */
 /* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
 html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
