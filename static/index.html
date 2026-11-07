@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=72">
-  <link rel="stylesheet" href="/static/dark.css?v=18">
+  <link rel="stylesheet" href="/static/styles.css?v=74">
+  <link rel="stylesheet" href="/static/dark.css?v=19">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -630,6 +630,20 @@
   </form>
 </dialog>
 
+<dialog id="cancelModal">
+  <form id="cancelForm" class="modal-card auth-card adm-staff-edit">
+    <button type="button" id="cancelClose" class="close" aria-label="Fechar">×</button>
+    <h2 id="cancelTitle">Cancelar pedido</h2>
+    <p id="cancelInfo" class="adm-note"></p>
+    <label><span class="adm-label">Motivo (fica no pedido)</span><input id="cancelReason" maxlength="300" placeholder="ex.: cliente desistiu, arte com problema"></label>
+    <label id="cancelRefundWrap" class="check" hidden><input type="checkbox" id="cancelRefund"> Devolver o valor ao cliente pelo Mercado Pago (estorno total)</label>
+    <p id="cancelNoMp" class="adm-note" hidden>Este pagamento não foi pelo Mercado Pago do site: se precisar devolver, faça por fora.</p>
+    <p id="cancelPremium" class="adm-note" hidden>Os dias de premium deste pedido saem da conta do cliente.</p>
+    <button class="primary full">Cancelar pedido</button>
+    <div id="cancelStatus" role="status" aria-live="polite"></div>
+  </form>
+</dialog>
+
 <dialog id="resetLinkModal">
   <form method="dialog" class="modal-card auth-card">
     <button class="close" value="cancel" aria-label="Fechar">×</button>
@@ -656,7 +670,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=74"></script>
+<script src="/static/app.js?v=75"></script>
 <script src="/static/senha.js?v=3"></script>
 </body>
 </html>

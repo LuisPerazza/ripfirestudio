@@ -1776,14 +1776,17 @@ function renderProfileOrders(list){
   $('#profileOrders').innerHTML=list.map(o=>{
     // Não pago em 24 h: o servidor cancela (Política de Reembolso) e o link de pagamento vence.
     const premium=o.sale_type==='PREMIUM_SUB', canceled=o.status==='CANCELADO', pending=o.payment_status!=='PAID'&&!canceled;
-    const chip=canceled?'<span class="pchip wait">Cancelado · não pago em 24 h</span>':pending?'<span class="pchip wait">Aguardando pagamento</span>':premium?'<span class="pchip ok">✓ Liberado</span>':'';
+    const cancelTxt={cliente:'Cancelado por você',loja:'Cancelado pela loja',prazo:'Cancelado · não pago em 24 h'}[o.canceled_by]||'Cancelado';
+    const chip=canceled?`<span class="pchip wait">${cancelTxt}${o.refunded?' · valor devolvido':''}</span>`:pending?'<span class="pchip wait">Aguardando pagamento</span>':premium?'<span class="pchip ok">✓ Liberado</span>':'';
     return `<article class="p-order">
       <div class="o-thumb">${orderIcon(o)}</div>
       <div><div class="o-title">Pedido ${esc(o.order_number)} · ${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}</div><div class="o-meta">${esc(orderSummary(o))}</div></div>
       <div class="o-right"><div class="o-total">${money(o.total)}</div>${chip}
         ${pending&&CONFIG.online_payment?`<button type="button" class="btn-grad small" data-pay-order="${o.id}">Pagar agora</button>
           <button type="button" class="plink" data-check-pay="${o.id}">Já paguei, verificar</button>`:''}
-        ${premium?'':`<button type="button" class="plink" data-detail="${o.id}">Ver detalhes ▼</button>`}</div>
+        ${premium?'':`<button type="button" class="plink" data-detail="${o.id}">Ver detalhes ▼</button>`}
+        ${pending?`<button type="button" class="plink danger" data-cancel-order="${o.id}" data-num="${esc(o.order_number)}">Cancelar pedido</button>`:''}
+        ${!pending&&!canceled&&!premium?`<a class="plink" href="https://wa.me/5547999303453?text=${encodeURIComponent(`Olá! Preciso de ajuda com o pedido #${o.order_number}.`)}" target="_blank" rel="noopener" title="Pedido pago: cancelamento e troca são com a loja">Precisa cancelar? Fale com a loja</a>`:''}</div>
       ${premium||canceled?'':orderSteps(o)}
       <div class="o-detail" id="detail_${o.id}" hidden></div>
     </article>`;
@@ -1794,6 +1797,15 @@ function renderProfileOrders(list){
   $$('#profileOrders [data-detail]').forEach(b=>b.onclick=()=>toggleOrderDetail(b));
   $$('#profileOrders [data-pay-order]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await openCheckout(b.dataset.payOrder)}catch(e){stat('#profileNotice',e.message,false);b.disabled=false}});
   $$('#profileOrders [data-check-pay]').forEach(b=>b.onclick=()=>verifyPayment(b.dataset.checkPay,b));
+  $$('#profileOrders [data-cancel-order]').forEach(b=>b.onclick=async()=>{
+    if(!confirm(`Cancelar o pedido ${b.dataset.num}? Ele ainda não foi pago, então nada é cobrado.`)) return;
+    b.disabled=true;
+    try{ const r=await fetch(`/api/me/orders/${b.dataset.cancelOrder}/cancel`,{method:'POST',headers:customerHeaders()}), d=await r.json().catch(()=>({}));
+      if(r.status===401){ logoutCustomer(); return openAuthModal(); }
+      if(!r.ok) throw new Error(d.detail||'Não foi possível cancelar.');
+      stat('#profileNotice',`Pedido ${b.dataset.num} cancelado.`,true); await loadProfile(); }
+    catch(e){ stat('#profileNotice',e.message,false); b.disabled=false; }
+  });
   $$('#profileOrders [data-go-editor]').forEach(b=>b.onclick=()=>tab('editor'));
 }
 async function toggleOrderDetail(btn){
@@ -2123,6 +2135,30 @@ function orderLine(o){
   const sizes=Object.entries(p.sizes||{}).filter(([,q])=>q>0).map(([s,q])=>`${s}×${q}`).join(' ');
   return `${p.shirt_model||''} ${p.color||''} · ${sizes}`;
 }
+// Cancelar (Admin): pago pelo Mercado Pago pode devolver o dinheiro na hora.
+function openCancelOrder(o){
+  if(!o) return;
+  const paid=o.payment_status==='PAID', viaMp=paid&&/^\d+$/.test(String(o.payment_ref||''));
+  $('#cancelTitle').textContent=`Cancelar o pedido ${o.order_number}`;
+  $('#cancelInfo').textContent=`${o.customer_name} · ${ORDER_TYPES[o.sale_type]||o.sale_type} · ${money(o.total)} · ${paid?'pago':'não pago'}`;
+  $('#cancelReason').value='';
+  $('#cancelRefundWrap').hidden=!viaMp; $('#cancelRefund').checked=viaMp;
+  $('#cancelNoMp').hidden=!(paid&&!viaMp);
+  $('#cancelPremium').hidden=!(paid&&o.sale_type==='PREMIUM_SUB');
+  $('#cancelStatus').textContent=''; $('#cancelStatus').className='';
+  $('#cancelClose').onclick=()=>$('#cancelModal').close();
+  $('#cancelForm').onsubmit=async ev=>{
+    ev.preventDefault();
+    const refund=viaMp&&$('#cancelRefund').checked;
+    if(refund&&!confirm(`Devolver ${money(o.total)} para ${o.customer_name} pelo Mercado Pago? Isso não tem volta.`)) return;
+    const btn=$('#cancelForm .primary'); btn.disabled=true;
+    try{ const d=await admFetch(`/api/admin/orders/${o.id}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:$('#cancelReason').value.trim(),refund})});
+      $('#cancelModal').close(); loadOrders(); alert(d.refunded?'Pedido cancelado e valor devolvido pelo Mercado Pago.':'Pedido cancelado.'); }
+    catch(e){ stat('#cancelStatus',e.message,false); }
+    finally{ btn.disabled=false; }
+  };
+  $('#cancelModal').showModal();
+}
 /* ---------- Aviso de pedido pelo WhatsApp ---------- */
 // O botão abre o WhatsApp da loja na conversa do cliente com o texto pronto.
 async function loadWaMessage(){
@@ -2202,8 +2238,9 @@ function renderOrders(){
         <td>${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}<small>${esc(orderLine(o))}</small></td>
         ${ADM.money?`<td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>`:''}
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
-          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
+          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.status==='CANCELADO'&&o.cancel_by?`<small>${o.payment_status==='REFUNDED'?'estornado · ':''}por ${esc(o.cancel_by)}${o.cancel_reason&&o.cancel_by!=='cliente'?` · ${esc(o.cancel_reason)}`:''}</small>`:''}${o.status!=='CANCELADO'&&o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
         <td class="adm-actions">${waCell(o)}${placementSides(o).length?`<button type="button" class="adm-btn sm adm-pos-btn" data-place="${o.id}" title="Onde o cliente posicionou o DTF na camisa">Ver posição</button>`:''}${adminRole==='admin'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
+          ${adminRole==='admin'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm danger" data-cancel="${o.id}">Cancelar</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
@@ -2222,6 +2259,7 @@ function renderOrders(){
       setTimeout(renderOrders,300); }
     catch(e){ console.warn(e); }
   }));
+  $$('#ordersTable [data-cancel]').forEach(b=>b.onclick=()=>openCancelOrder(ADM.orders.find(x=>x.id===b.dataset.cancel)));
   $$('#ordersTable [data-pay]').forEach(b=>b.onclick=async()=>{
     // Libera a produção: com pagamento real no site, um clique errado sai caro.
     if(!confirm(`Marcar o pedido ${b.dataset.num} como pago? Use só se o pagamento foi recebido fora do site.`)) return;

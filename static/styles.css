@@ -764,3 +764,6 @@ dialog.placement-modal{width:min(980px,94vw)}
 .p-empty-shirt img{display:block;width:60px;height:60px;object-fit:contain;filter:drop-shadow(0 3px 6px rgba(0,0,0,.18))}
 .p-empty-shirt .pe-dark{display:none}
 .p-empty-shirt.flat img{filter:none}
+.plink.danger{color:#b3261e}
+.check[hidden]{display:none!important}
+.adm-staff-edit label.check{display:flex;gap:10px;align-items:flex-start}.adm-staff-edit label.check input{width:auto;margin:3px 0 0;flex:none}

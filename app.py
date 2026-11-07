@@ -324,6 +324,11 @@ def init_db():
         if "stage_by" not in cols:
             # Quem da equipe mudou a etapa por último (o operador que pegou o pedido).
             con.execute("ALTER TABLE orders ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''")
+        if "cancel_by" not in cols:
+            # Quem cancelou (cliente ou usuário da equipe), quando e por quê.
+            con.execute("ALTER TABLE orders ADD COLUMN cancel_by TEXT NOT NULL DEFAULT ''")
+            con.execute("ALTER TABLE orders ADD COLUMN cancel_at REAL NOT NULL DEFAULT 0")
+            con.execute("ALTER TABLE orders ADD COLUMN cancel_reason TEXT NOT NULL DEFAULT ''")
         if "wa_notified_at" not in cols:
             # Quando a equipe mandou o "recebemos seu pedido" pelo WhatsApp, e quem mandou.
             con.execute("ALTER TABLE orders ADD COLUMN wa_notified_at REAL NOT NULL DEFAULT 0")
@@ -1373,11 +1378,15 @@ def site_url() -> str:
     return url if url.startswith("https://") else ""
 
 
-def mp_request(method: str, path: str, body: dict[str, Any] | None = None, missing_ok: bool = False) -> dict[str, Any]:
+def mp_request(method: str, path: str, body: dict[str, Any] | None = None, missing_ok: bool = False,
+               idempotency_key: str = "") -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {mp_token()}", "Content-Type": "application/json"}
+    if idempotency_key:  # o mesmo estorno pedido 2x não devolve 2x
+        headers["X-Idempotency-Key"] = idempotency_key
     req = urllib.request.Request(
         MP_API + path, method=method,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": f"Bearer {mp_token()}", "Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1399,7 +1408,7 @@ def apply_mp_payment(payment: dict[str, Any]) -> bool:
     if payment.get("status") != "approved":
         return False
     row = load_order(str(payment.get("external_reference") or ""))
-    if not row:
+    if not row or row["payment_status"] == "REFUNDED":  # estornado não volta a valer
         return False
     paid = float(payment.get("transaction_amount") or 0)
     if payment.get("currency_id") != "BRL" or paid + 0.01 < float(row["total"]):
@@ -1852,6 +1861,10 @@ def order_for_customer(row: dict[str, Any]) -> dict[str, Any]:
         "premium_arts": sorted(premium_names),
         "premium_days": data.get("premium_days"),
         "stage": row.get("stage") or "",
+        # Quem cancelou: "cliente" ou a loja (o nome do usuário da equipe não vai pro cliente).
+        "canceled_by": "" if row["status"] != "CANCELADO" else (
+            "cliente" if row.get("cancel_by") == "cliente" else "loja" if row.get("cancel_by") else "prazo"),
+        "refunded": row["payment_status"] == "REFUNDED",
     }
 
 
@@ -3077,7 +3090,8 @@ def list_orders(staff: dict[str, Any] = Depends(require_staff)) -> list[dict[str
         rows = con.execute(
             """SELECT id,order_number,created_at,customer_name,customer_email,customer_whatsapp,
                       sale_type,status,payment_status,total,folder_path,production_drop_path,
-                      data_json,stage,stage_at,stage_by,payment_ref,wa_notified_at,wa_notified_by
+                      data_json,stage,stage_at,stage_by,payment_ref,wa_notified_at,wa_notified_by,
+                      cancel_by,cancel_at,cancel_reason
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
 
@@ -3791,6 +3805,60 @@ def mercadopago_webhook(request: Request, payload: dict[str, Any] | None = None)
     # missing_ok: o "simular notificação" do painel manda um id que não existe.
     payment = mp_request("GET", f"/v1/payments/{payment_id}", missing_ok=True)
     return {"ok": True, "paid": apply_mp_payment(payment)}
+
+
+# ---------- Cancelar pedido ----------
+# Cliente: só pedido ainda não pago (o pago já pode estar na produção: ele fala
+# com a loja). Admin: qualquer um; se foi pago pelo Mercado Pago, pode devolver
+# o dinheiro na hora (estorno total). Premium pago cancelado tira os dias.
+def cancel_order(row: dict[str, Any], by: str, reason: str = "", refund: bool = False) -> dict[str, Any]:
+    if row["status"] == "CANCELADO":
+        raise HTTPException(400, "Este pedido já está cancelado.")
+    refunded = False
+    if refund:
+        if row["payment_status"] != "PAID":
+            raise HTTPException(400, "Pedido não pago: não há o que devolver.")
+        ref = str(row.get("payment_ref") or "")
+        if not (ref.isdigit() and mp_token()):
+            raise HTTPException(400, "Este pagamento não foi pelo Mercado Pago do site: devolva por fora e cancele sem estorno.")
+        mp_request("POST", f"/v1/payments/{ref}/refunds", {}, idempotency_key=f"estorno-{row['id']}")
+        refunded = True
+    with db() as con:
+        con.execute(
+            """UPDATE orders SET status='CANCELADO', cancel_by=?, cancel_at=?, cancel_reason=?,
+               payment_status=CASE WHEN ?=1 THEN 'REFUNDED' ELSE payment_status END WHERE id=?""",
+            (by, time.time(), reason[:300], 1 if refunded else 0, row["id"]))
+        if row["sale_type"] == "PREMIUM_SUB" and row["status"] == "PREMIUM_LIBERADO":
+            data = json.loads(row["data_json"] or "{}")
+            cust = con.execute("SELECT premium_until FROM customers WHERE id=?", (data.get("customer_id"),)).fetchone()
+            if cust:
+                until = max(time.time(), float(cust["premium_until"] or 0) - int(data.get("premium_days") or 30) * 86400)
+                con.execute("UPDATE customers SET premium_until=? WHERE id=?",
+                            (until if until > time.time() else 0, data["customer_id"]))
+    return {"ok": True, "status": "CANCELADO", "refunded": refunded}
+
+
+@app.post("/api/me/orders/{order_id}/cancel")
+def customer_cancel_order(order_id: str, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    row = load_order(order_id)
+    if not row or not order_is_customers(row, customer):
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["payment_status"] == "PAID":
+        raise HTTPException(400, "Pedido já pago não é cancelado por aqui: fale com a loja no WhatsApp.")
+    return cancel_order(row, "cliente", "Cancelado pelo cliente")
+
+
+class AdminCancel(BaseModel):
+    reason: str = ""
+    refund: bool = False
+
+
+@app.post("/api/admin/orders/{order_id}/cancel")
+def admin_cancel_order(order_id: str, payload: AdminCancel, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    return cancel_order(row, staff["user"], payload.reason.strip(), payload.refund)
 
 
 # ---------- E-mail e recuperação de senha ----------
