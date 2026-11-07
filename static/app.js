@@ -34,7 +34,7 @@ function tab(id){
   document.body.classList.toggle('is-home',id==='home');
   document.body.classList.toggle('is-editor',id==='editor');
   document.body.classList.toggle('is-digital',id==='digital');
-  $('#navAccount').classList.toggle('current',id==='profile');
+  $('#navAccount').classList.toggle('current',id==='profile'||(id==='admin'&&!currentCustomer));
   if(id==='editor') positionPrintArea();
   if(id==='admin') enterAdmin();
   if(id==='profile'){ stat('#profileNotice','',true); loadProfile(); }
@@ -65,6 +65,18 @@ function customerPayload(){
   const c=currentCustomer||{};
   return {name:c.full_name||'', email:c.email||'', whatsapp:c.phone||'', cep:c.cep||'', address_number:c.address_number||'', document:c.document||''};
 }
+// Botão do menu: "Entrar", ou a inicial + primeiro nome do cliente logado,
+// ou o usuário da equipe (aí ele leva ao painel do Admin).
+function renderNavAccount(){
+  const cust=!!currentCustomer, staff=!cust&&!!adminKey, logged=cust||staff;
+  const name=cust?((currentCustomer.full_name||'').trim().split(/\s+/)[0]||'Minha conta'):staff?(adminUser||'Equipe'):'Entrar';
+  $('#navAvatar').hidden=!logged;
+  $('#navAvatar').textContent=cust?customerInitial():staff?String(adminUser||'?').charAt(0).toUpperCase():'';
+  $('#navAccountLabel').textContent=name;
+  $('#navAccount').classList.toggle('logged',logged);
+  $('#navAccount').classList.toggle('staff',staff);
+  $('#navAccount').title=staff?'Painel da equipe':cust?'Minha conta':'';
+}
 function renderAccountBoxes(){
   const logged=!!currentCustomer;
   [['accountInfoShirt','openAuthShirt','logoutBtnShirt'],['accountInfoGang','openAuthGang','logoutBtnGang']].forEach(([infoId,openId,logoutId])=>{
@@ -72,10 +84,8 @@ function renderAccountBoxes(){
     $('#'+openId).hidden = logged;
     $('#'+logoutId).hidden = !logged;
   });
-  // Botão do menu: "Entrar" ou a inicial + primeiro nome de quem está logado.
-  $('#navAvatar').hidden=!logged; $('#navAvatar').textContent=logged?customerInitial():'';
-  $('#navAccountLabel').textContent=logged?(currentCustomer.full_name||'').trim().split(/\s+/)[0]||'Minha conta':'Entrar';
-  $('#navAccount').classList.toggle('logged',logged);
+  renderNavAccount();
+  $('.nav-btn[data-tab="admin"]').hidden=!(adminKey&&logged);
   renderLibrary(); // selos e botões mudam com a conta
 }
 const customerInitial=()=>(currentCustomer?.full_name||currentCustomer?.email||'?').trim().charAt(0).toUpperCase();
@@ -458,7 +468,7 @@ const AI_UI_ENABLED=false;
 function bind(){
   $$('.nav-btn').forEach(b=>b.onclick=()=>tab(b.dataset.tab));$('#homeLogo').onclick=()=>{tab('home');window.scrollTo({top:0,behavior:'smooth'})};$('#startCustomize').onclick=()=>tab('editor');
   $('#openAuthShirt').onclick=openAuthModal;$('#openAuthGang').onclick=openAuthModal;
-  $('#navAccount').onclick=()=>currentCustomer?tab('profile'):openAuthModal();
+  $('#navAccount').onclick=()=>currentCustomer?tab('profile'):adminKey?tab('admin'):openAuthModal();
   $('#logoutBtnShirt').onclick=logoutCustomer;$('#logoutBtnGang').onclick=logoutCustomer;
   $$('#profile [data-pview]').forEach(b=>b.onclick=()=>{profileView=b.dataset.pview;renderProfile()});
   $('#pfSave').onclick=saveProfile;$('#pfPasswordSave').onclick=savePassword;
@@ -1383,7 +1393,10 @@ async function logoutAdmin(){
 // alças também só aparecem pro admin logado.
 function syncAdminUi(){
   const logged=!!adminKey;
-  $('.nav-btn[data-tab="admin"]').hidden=!logged;
+  // Logado só como equipe, o botão com o nome já leva ao painel: o "Admin" some
+  // pra não repetir. Com conta de cliente aberta também, ele volta.
+  $('.nav-btn[data-tab="admin"]').hidden=!(logged&&currentCustomer);
+  renderNavAccount();
   if(!logged&&$('#admin').classList.contains('active')) tab('home');
   $('#printAreaMove').hidden=!logged;
   $('#printAreaResize').hidden=!logged;
