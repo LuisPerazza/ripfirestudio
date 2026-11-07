@@ -4,3 +4,6 @@ html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#f
 html[data-theme="dark"] .lib-apply:hover,html[data-theme="dark"] .lib-dl:hover{background:#ece1f2}
 /* Sol/lua: no escuro, ao subir, ganha brilho branco (os botões do menu ficam no styles.css). */
 html[data-theme="dark"] .topbar .theme-toggle:hover{box-shadow:0 10px 30px rgba(255,255,255,.55)}
+
+/* Balão de prévia do WhatsApp: verde escuro como no WhatsApp com tema escuro */
+html[data-theme="dark"] .adm-wa-preview{background:#005c4b;color:#e9edef}

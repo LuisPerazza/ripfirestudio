@@ -734,3 +734,17 @@ body.is-home .site-footer{background:linear-gradient(to top,rgba(5,5,5,.7),rgba(
 @media(max-width:900px){.site-footer{grid-template-columns:1fr;padding:36px 16px 20px!important}
   .site-footer .footer-center,.site-footer .footer-links{grid-column:1;justify-self:center}
   .site-footer .footer-links{order:-1;justify-content:center}}
+
+/* Aviso de pedido pelo WhatsApp */
+.adm-wa-btn{background:#1f9d55!important;border-color:#1f9d55!important;color:#fff!important;text-decoration:none;display:inline-block}
+.adm-wa-btn:hover{background:#17813f!important}
+.adm-wa-done{display:inline-block;font-size:12px;font-weight:700;color:#1f9d55;margin-right:6px}
+.adm-wa-again{font-size:12px;color:var(--muted);margin-right:6px}
+.adm-wa-none{display:inline-block;font-size:12px;color:var(--muted);margin-right:6px}
+.adm-wa-card{margin-top:16px}.adm-wa-card summary{cursor:pointer;list-style:none}.adm-wa-card summary h3{display:inline;margin:0}
+.adm-wa-card summary::before{content:"▸ ";color:var(--muted)}.adm-wa-card[open] summary::before{content:"▾ "}
+.adm-wa-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px}
+.adm-wa-grid textarea{width:100%;font:inherit;font-size:14px;line-height:1.5;resize:vertical}
+.adm-wa-preview{white-space:pre-wrap;background:#dcf8c6;color:#111;border-radius:10px 10px 2px 10px;padding:10px 12px;font-size:14px;line-height:1.5;min-height:120px;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.adm-wa-actions{display:flex;gap:8px;margin-top:12px}
+@media(max-width:800px){.adm-wa-grid{grid-template-columns:1fr}}

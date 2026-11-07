@@ -323,6 +323,10 @@ def init_db():
         if "stage_by" not in cols:
             # Quem da equipe mudou a etapa por último (o operador que pegou o pedido).
             con.execute("ALTER TABLE orders ADD COLUMN stage_by TEXT NOT NULL DEFAULT ''")
+        if "wa_notified_at" not in cols:
+            # Quando a equipe mandou o "recebemos seu pedido" pelo WhatsApp, e quem mandou.
+            con.execute("ALTER TABLE orders ADD COLUMN wa_notified_at REAL NOT NULL DEFAULT 0")
+            con.execute("ALTER TABLE orders ADD COLUMN wa_notified_by TEXT NOT NULL DEFAULT ''")
         con.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         con.execute("""CREATE TABLE IF NOT EXISTS staff_users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL,
                        role TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT NOT NULL DEFAULT '')""")
@@ -2982,7 +2986,7 @@ def list_orders() -> list[dict[str, Any]]:
         rows = con.execute(
             """SELECT id,order_number,created_at,customer_name,customer_email,customer_whatsapp,
                       sale_type,status,payment_status,total,folder_path,production_drop_path,
-                      data_json,stage,stage_at,stage_by,payment_ref
+                      data_json,stage,stage_at,stage_by,payment_ref,wa_notified_at,wa_notified_by
                FROM orders ORDER BY created_at DESC"""
         ).fetchall()
 
@@ -3273,6 +3277,42 @@ def set_order_stage(order_id: str, payload: dict[str, Any], staff: dict[str, Any
             (stage, time.time(), staff["user"], stage, order_id)
         )
     return {"ok": True, "stage": stage, "stage_by": staff["user"]}
+
+
+# ---------- Aviso de pedido pelo WhatsApp ----------
+# A equipe manda pelo WhatsApp da loja (botão no Admin abre a conversa com o texto
+# pronto). O texto fica na tabela settings e o Admin pode mudar.
+WA_ORDER_MESSAGE_DEFAULT = (
+    "Olá, {nome}! Aqui é da Ripfire Studio. 🔥\n\n"
+    "Recebemos o seu pedido #{pedido} e o pagamento já foi confirmado. ✅\n"
+    "A partir de agora vamos te mandar por aqui as atualizações da produção.\n\n"
+    "Qualquer dúvida, é só responder esta mensagem!"
+)
+
+
+@app.get("/api/admin/whatsapp-message", dependencies=[Depends(require_staff)])
+def get_wa_message() -> dict[str, Any]:
+    return {"message": get_setting("wa_order_message") or WA_ORDER_MESSAGE_DEFAULT,
+            "default": WA_ORDER_MESSAGE_DEFAULT}
+
+
+@app.put("/api/admin/whatsapp-message", dependencies=[Depends(require_admin)])
+def put_wa_message(payload: dict[str, Any]) -> dict[str, Any]:
+    message = str(payload.get("message") or "").replace("\r\n", "\n").strip()
+    if len(message) > 1500:
+        raise HTTPException(400, "Mensagem muito longa (máximo 1500 caracteres).")
+    set_setting("wa_order_message", "" if message == WA_ORDER_MESSAGE_DEFAULT else message)
+    return {"ok": True, "message": message or WA_ORDER_MESSAGE_DEFAULT}
+
+
+@app.post("/api/admin/orders/{order_id}/wa-notified")
+def mark_wa_notified(order_id: str, staff: dict[str, Any] = Depends(require_staff)) -> dict[str, Any]:
+    if not load_order(order_id):
+        raise HTTPException(404, "Pedido não encontrado.")
+    now = time.time()
+    with db() as con:
+        con.execute("UPDATE orders SET wa_notified_at=?, wa_notified_by=? WHERE id=?", (now, staff["user"], order_id))
+    return {"ok": True, "wa_notified_at": now, "wa_notified_by": staff["user"]}
 
 
 # ---------- Custos (Admin) ----------

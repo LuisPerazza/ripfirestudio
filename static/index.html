@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=66">
-  <link rel="stylesheet" href="/static/dark.css?v=13">
+  <link rel="stylesheet" href="/static/styles.css?v=67">
+  <link rel="stylesheet" href="/static/dark.css?v=14">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -351,6 +351,18 @@
           <div id="ordersFilters" class="adm-chips" role="group" aria-label="Filtrar por etapa"></div>
         </div>
         <div id="ordersTable" class="adm-table-wrap"></div>
+        <details id="waMsgCard" class="adm-card adm-wa-card" hidden>
+          <summary><h3>Mensagem do WhatsApp para pedido pago</h3></summary>
+          <p class="adm-note">O botão <b>Avisar no WhatsApp</b> de cada pedido pago abre o WhatsApp da loja na conversa do cliente com este texto pronto; é só apertar enviar.
+            Use <code>{nome}</code> (primeiro nome), <code>{nome_completo}</code>, <code>{pedido}</code> (número do pedido) e <code>{valor}</code>.</p>
+          <div class="adm-wa-grid">
+            <label><span class="adm-label">Texto</span><textarea id="waMsgText" rows="8" maxlength="1500"></textarea></label>
+            <div><span class="adm-label">Como o cliente vai ver</span><div id="waMsgPreview" class="adm-wa-preview"></div></div>
+          </div>
+          <div class="adm-wa-actions"><button type="button" id="waMsgSave" class="adm-btn">Salvar mensagem</button>
+            <button type="button" id="waMsgReset" class="adm-btn ghost">Voltar ao texto padrão</button></div>
+          <div id="waMsgStatus" role="status" aria-live="polite"></div>
+        </details>
       </section>
 
       <!-- Clientes -->
@@ -604,7 +616,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=66"></script>
+<script src="/static/app.js?v=67"></script>
 <script src="/static/senha.js?v=1"></script>
 </body>
 </html>

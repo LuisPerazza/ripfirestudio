@@ -1995,6 +1995,7 @@ function bindAdmin(){
   $$('#admin [data-days]').forEach(b=>b.onclick=()=>{ADM.days=Number(b.dataset.days);$$('#admin [data-days]').forEach(x=>x.classList.toggle('on',x===b));loadDashboard()});
   $$('#admin [data-group]').forEach(b=>b.onclick=()=>{ADM.group=b.dataset.group;$$('#admin [data-group]').forEach(x=>x.classList.toggle('on',x===b));if(ADM.dash)renderDashboard()});
   $('#ordersSearch').oninput=renderOrders;
+  bindWaMessage();
   $('#customersSearch').oninput=renderCustomers;
   $('#costsForm').onsubmit=saveCosts;
   $('#mockupToggle').onclick=()=>{const w=$('#mockupFormWrap'), open=w.hidden; w.hidden=!open; $('#mockupToggle').setAttribute('aria-expanded',String(open));
@@ -2094,6 +2095,7 @@ async function loadOrders(){
   if(!adminKey) return;
   try{ ADM.orders=await admFetch('/api/orders'); }
   catch(e){ $('#ordersTable').innerHTML=`<p class="error">${esc(e.message)}</p>`; return; }
+  if(!ADM.waMsg) await loadWaMessage();
   renderOrders();
   if(ADM.pane==='dash'&&ADM.dash) renderDashStages();
 }
@@ -2104,6 +2106,45 @@ function orderLine(o){
   if(o.sale_type==='PREMIUM_SUB') return `${d.premium_days||30} dias`;
   const sizes=Object.entries(p.sizes||{}).filter(([,q])=>q>0).map(([s,q])=>`${s}×${q}`).join(' ');
   return `${p.shirt_model||''} ${p.color||''} · ${sizes}`;
+}
+/* ---------- Aviso de pedido pelo WhatsApp ---------- */
+// O botão abre o WhatsApp da loja na conversa do cliente com o texto pronto.
+async function loadWaMessage(){
+  try{ const d=await admFetch('/api/admin/whatsapp-message'); ADM.waMsg=d.message; ADM.waDefault=d.default; }
+  catch(e){ ADM.waMsg=ADM.waMsg||''; }
+  const box=$('#waMsgText'); if(box&&!box.matches(':focus')) box.value=ADM.waMsg||'';
+  $('#waMsgCard').hidden=adminRole==='producao';
+  renderWaPreview();
+}
+function waFill(tpl,o){
+  const full=String(o.customer_name||'').trim(), first=full.split(/\s+/)[0]||'';
+  const nice=first?first[0].toUpperCase()+first.slice(1).toLowerCase():'';
+  return String(tpl||'').replace(/\{(nome_completo|nome|pedido|valor)\}/g,(m,k)=>
+    k==='nome'?nice:k==='nome_completo'?full:k==='pedido'?String(o.order_number||''):money(o.total));
+}
+function renderWaPreview(){
+  const el=$('#waMsgPreview'); if(!el) return;
+  el.textContent=waFill($('#waMsgText').value,{customer_name:'Maria Souza',order_number:'261107-0001',total:89.9});
+}
+function bindWaMessage(){
+  $('#waMsgText').oninput=renderWaPreview;
+  $('#waMsgReset').onclick=()=>{ $('#waMsgText').value=ADM.waDefault||''; renderWaPreview(); };
+  $('#waMsgSave').onclick=async()=>{
+    const b=$('#waMsgSave'); b.disabled=true;
+    try{ const d=await admFetch('/api/admin/whatsapp-message',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:$('#waMsgText').value})});
+      ADM.waMsg=d.message; stat('#waMsgStatus','Mensagem salva.',true); }
+    catch(e){ stat('#waMsgStatus',e.message,false); }
+    finally{ b.disabled=false; }
+  };
+}
+function waCell(o){
+  if(o.payment_status!=='PAID'||o.sale_type==='PREMIUM_SUB') return '';
+  const wa=waLink(o.customer_whatsapp);
+  if(!wa) return `<span class="adm-wa-none" title="O cliente não cadastrou WhatsApp">sem WhatsApp</span>`;
+  const href=`${wa}?text=${encodeURIComponent(waFill(ADM.waMsg,o))}`;
+  if(o.wa_notified_at) return `<span class="adm-wa-done" title="Avisado por ${esc(o.wa_notified_by||'')} em ${new Date(o.wa_notified_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}">✓ Avisado</span>
+    <a class="adm-wa-again" href="${href}" target="_blank" rel="noopener" data-wa="${o.id}">reenviar</a>`;
+  return `<a class="adm-btn sm adm-wa-btn" href="${href}" target="_blank" rel="noopener" data-wa="${o.id}">Avisar no WhatsApp</a>`;
 }
 function renderOrders(){
   const counts={ALL:ADM.orders.length}; ADM.orders.forEach(o=>{const k=orderStageKey(o);counts[k]=(counts[k]||0)+1;});
@@ -2124,7 +2165,7 @@ function renderOrders(){
         <td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
           :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
-        <td class="adm-actions">${adminRole!=='producao'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
+        <td class="adm-actions">${waCell(o)}${adminRole!=='producao'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
@@ -2135,6 +2176,13 @@ function renderOrders(){
       renderOrders(); }
     catch(e){ alert(e.message); sel.disabled=false; }
   });
+  $$('#ordersTable [data-wa]').forEach(a=>a.addEventListener('click',async()=>{
+    // O link abre o WhatsApp; aqui só registra que a equipe avisou.
+    try{ const d=await admFetch(`/api/admin/orders/${a.dataset.wa}/wa-notified`,{method:'POST'});
+      const o=ADM.orders.find(x=>x.id===a.dataset.wa); if(o){ o.wa_notified_at=d.wa_notified_at; o.wa_notified_by=d.wa_notified_by; }
+      setTimeout(renderOrders,300); }
+    catch(e){ console.warn(e); }
+  }));
   $$('#ordersTable [data-pay]').forEach(b=>b.onclick=async()=>{
     // Libera a produção: com pagamento real no site, um clique errado sai caro.
     if(!confirm(`Marcar o pedido ${b.dataset.num} como pago? Use só se o pagamento foi recebido fora do site.`)) return;
