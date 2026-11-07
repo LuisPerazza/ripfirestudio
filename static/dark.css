@@ -439,6 +439,9 @@ html[data-theme="dark"]{color-scheme:dark;--bg:#121214;--paper:#1c1c1f;--ink:#ec
 :where(html[data-theme="dark"]) .adm-wa-preview{background:#dcf8c6;color:#f3f3f3;box-shadow:0 1px 2px rgba(0,0,0,.15)}
 :where(html[data-theme="dark"]) .pos-img{background:#26262a;color:var(--muted)}
 :where(html[data-theme="dark"]) .plink.danger{color:#ff8a80}
+:where(html[data-theme="dark"]) #profile .btn-line.on-dark{background:transparent;color:#fff;border-color:rgba(255,255,255,.4)}
+:where(html[data-theme="dark"]) #profile .btn-line.on-dark:hover{border-color:#1c1c1f;color:#fff;background:rgba(255,255,255,.08)}
+:where(html[data-theme="dark"]) .price-card #priceNote{color:#e9c8ff}
 /* Ajustes à mão do tema escuro (o gerador cola isto no fim do dark.css). */
 /* Biblioteca: no escuro os botões de baixar/aplicar ficam brancos, como sempre foram. */
 html[data-theme="dark"] .lib-apply,html[data-theme="dark"] .lib-dl{background:#fff;color:#111}
@@ -454,3 +457,5 @@ html[data-theme="dark"] .p-empty-shirt .pe-light{display:none}
 html[data-theme="dark"] .p-empty-shirt .pe-dark{display:block}
 /* Caixa do "primeiro pedido": fundo escuro no tema escuro (antes ficava clara e o título sumia). */
 html[data-theme="dark"] .p-empty{background:#1b1820;border-color:#4a3a58}
+html[data-theme="dark"] .btn-line.on-dark:hover,html[data-theme="dark"] #profile .btn-line.on-dark:hover{border-color:#fff;color:#fff}
+html[data-theme="dark"] #profile .btn-line.on-dark{background:transparent;color:#fff}

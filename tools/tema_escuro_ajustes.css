@@ -13,3 +13,5 @@ html[data-theme="dark"] .p-empty-shirt .pe-light{display:none}
 html[data-theme="dark"] .p-empty-shirt .pe-dark{display:block}
 /* Caixa do "primeiro pedido": fundo escuro no tema escuro (antes ficava clara e o título sumia). */
 html[data-theme="dark"] .p-empty{background:#1b1820;border-color:#4a3a58}
+html[data-theme="dark"] .btn-line.on-dark:hover,html[data-theme="dark"] #profile .btn-line.on-dark:hover{border-color:#fff;color:#fff}
+html[data-theme="dark"] #profile .btn-line.on-dark{background:transparent;color:#fff}

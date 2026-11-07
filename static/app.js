@@ -86,6 +86,7 @@ function renderAccountBoxes(){
   });
   renderNavAccount();
   $('.nav-btn[data-tab="admin"]').hidden=!(adminKey&&logged);
+  if(CONFIG) updatePrice(); // premium muda o preço do metro do DTF
   renderLibrary(); // selos e botões mudam com a conta
 }
 const customerInitial=()=>(currentCustomer?.full_name||currentCustomer?.email||'?').trim().charAt(0).toUpperCase();
@@ -572,7 +573,9 @@ const sizeQty=i=>Math.max(0,Math.floor(Number(i.value)||0));
 function shirtQty(){return $$('#sizeGrid input').reduce((a,i)=>a+sizeQty(i),0)}
 function updatePrice(){
   if(!CONFIG)return;
-  if($('#saleType').value==='DTF_ONLY'){$('#priceTotal').textContent=money(calcGangTotal());return}
+  const dtf=$('#saleType').value==='DTF_ONLY', off=dtf?premiumDtfOff():0;
+  $('#priceNote').hidden=!off; $('#priceNote').textContent=off?`★ Premium: ${off}% de desconto no metro`:'';
+  if(dtf){$('#priceTotal').textContent=money(calcGangTotal());return}
   $('#priceTotal').textContent=money(calcTotal());
 }
 function calcTotal(){const q=shirtQty(),t=$('#saleType').value,p=CONFIG.pricing,m=chosenModel();if(t==='DTF_ONLY')return q*p.dtf_only_unit;if(t==='DTF_PLUS_SHIRT')return q*(p.dtf_only_unit+m.base_price);return q*(p.dtf_only_unit+m.base_price+p.finished_press_unit)}
@@ -1545,8 +1548,8 @@ async function renderLibArts(cat){
 function renderLibraryPremium(){
   const box=$('#libraryPremium'), n=premiumNotice;
   box.innerHTML=hasPremium()
-    ? `<div><b>★ Premium ativo até ${fmtDate(currentCustomer.premium_until)}</b><br>Baixe e use todas as artes premium.</div>`
-    : `<div><b>★ Premium</b> · Use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> por mês.
+    ? `<div><b>★ Premium ativo até ${fmtDate(currentCustomer.premium_until)}</b><br>Baixe e use todas as artes premium e tenha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</div>`
+    : `<div><b>★ Premium</b> · Por <b>${money(CONFIG.premium_price)}</b> por mês você libera todas as artes premium e ganha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.
         ${n?`<div class="${n.ok?'success':'error'}">${esc(n.msg)}</div>`:''}</div>
        <button type="button" class="btn-grad" id="subscribePremium">Assinar premium</button>`;
   const b=$('#subscribePremium'); if(b) b.onclick=subscribePremium;
@@ -1630,7 +1633,7 @@ function renderArtPicker(){
   const prem=$('#apPremium'), locked=apView.side==='premium'&&!hasPremium();
   prem.hidden=!locked;
   if(locked){
-    prem.innerHTML=`<span><b>★ Premium</b> · Use todas as artes premium por <b>${money(CONFIG.premium_price)}</b> por mês.</span>
+    prem.innerHTML=`<span><b>★ Premium</b> · Por <b>${money(CONFIG.premium_price)}</b> por mês você libera todas as artes premium e ganha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</span>
       <button type="button" class="btn-grad" data-ap-sub>Assinar</button>`;
     prem.querySelector('[data-ap-sub]').onclick=()=>{$('#artPickerModal').close();tab('digital');subscribePremium()};
   }
@@ -1785,6 +1788,7 @@ function renderProfileOrders(list){
         ${pending&&CONFIG.online_payment?`<button type="button" class="btn-grad small" data-pay-order="${o.id}">Pagar agora</button>
           <button type="button" class="plink" data-check-pay="${o.id}">Já paguei, verificar</button>`:''}
         ${premium?'':`<button type="button" class="plink" data-detail="${o.id}">Ver detalhes ▼</button>`}
+        ${canceled?`<button type="button" class="plink danger" data-forget-order="${o.id}" data-num="${esc(o.order_number)}">Apagar do histórico</button>`:''}
         ${pending?`<button type="button" class="plink danger" data-cancel-order="${o.id}" data-num="${esc(o.order_number)}">Cancelar pedido</button>`:''}
         ${!pending&&!canceled&&!premium?`<a class="plink" href="https://wa.me/5547999303453?text=${encodeURIComponent(`Olá! Preciso de ajuda com o pedido #${o.order_number}.`)}" target="_blank" rel="noopener" title="Pedido pago: cancelamento e troca são com a loja">Precisa cancelar? Fale com a loja</a>`:''}</div>
       ${premium||canceled?'':orderSteps(o)}
@@ -1797,6 +1801,11 @@ function renderProfileOrders(list){
   $$('#profileOrders [data-detail]').forEach(b=>b.onclick=()=>toggleOrderDetail(b));
   $$('#profileOrders [data-pay-order]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await openCheckout(b.dataset.payOrder)}catch(e){stat('#profileNotice',e.message,false);b.disabled=false}});
   $$('#profileOrders [data-check-pay]').forEach(b=>b.onclick=()=>verifyPayment(b.dataset.checkPay,b));
+  const nCanceled=((profileData&&profileData.orders)||list).filter(o=>o.status==='CANCELADO').length;
+  $('#clearCanceledOrders').hidden=!nCanceled;
+  $('#clearCanceledOrders').textContent=`Apagar cancelados (${nCanceled})`;
+  $('#clearCanceledOrders').onclick=()=>forgetCustomerOrders('/api/me/orders/clear-canceled','POST',`Apagar do seu histórico os ${nCanceled} pedido(s) cancelado(s)?`);
+  $$('#profileOrders [data-forget-order]').forEach(b=>b.onclick=()=>forgetCustomerOrders(`/api/me/orders/${b.dataset.forgetOrder}`,'DELETE',`Apagar o pedido cancelado ${b.dataset.num} do seu histórico?`));
   $$('#profileOrders [data-cancel-order]').forEach(b=>b.onclick=async()=>{
     if(!confirm(`Cancelar o pedido ${b.dataset.num}? Ele ainda não foi pago, então nada é cobrado.`)) return;
     b.disabled=true;
@@ -1807,6 +1816,14 @@ function renderProfileOrders(list){
     catch(e){ stat('#profileNotice',e.message,false); b.disabled=false; }
   });
   $$('#profileOrders [data-go-editor]').forEach(b=>b.onclick=()=>tab('editor'));
+}
+async function forgetCustomerOrders(url,method,question){
+  if(!confirm(question)) return;
+  try{ const r=await fetch(url,{method,headers:customerHeaders()}), d=await r.json().catch(()=>({}));
+    if(r.status===401){ logoutCustomer(); return openAuthModal(); }
+    if(!r.ok) throw new Error(d.detail||'Não foi possível apagar.');
+    stat('#profileNotice','Histórico atualizado.',true); await loadProfile(); }
+  catch(e){ stat('#profileNotice',e.message,false); }
 }
 async function toggleOrderDetail(btn){
   const o=profileData.orders.find(x=>x.id===btn.dataset.detail), box=$('#detail_'+o.id);
@@ -1851,14 +1868,14 @@ function renderProfilePremium(){
   if(hasPremium()){
     const left=premiumDaysLeft(), total=Math.max(days,left);
     box.innerHTML=`<span class="pchip premium">★ PREMIUM ATIVO</span>
-      <h2>Até ${fmtDate(currentCustomer.premium_until)}</h2><p>Todas as artes premium liberadas: baixe e use na camisa e no DTF.</p>
+      <h2>Até ${fmtDate(currentCustomer.premium_until)}</h2><p>Todas as artes premium liberadas e ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</p>
       <div class="p-meter"><span style="width:${Math.round(left/total*100)}%"></span></div>
       <div class="p-meter-legend"><span>${left} ${left===1?'dia restante':'dias restantes'}</span><span>de ${total}</span></div>
       <button type="button" id="profileRenew" class="btn-grad full">Renovar +${days} dias · ${price}</button>
       <p class="small">Renovando antes de vencer, os dias novos somam aos que faltam.</p>${notice}`;
   }else{
     box.innerHTML=`<span class="pchip premium">★ PREMIUM</span>
-      <h2>Libere todas as artes</h2><p>Use todas as artes premium por ${price} por mês.</p>
+      <h2>Libere todas as artes</h2><p>Por ${price} por mês você libera todas as artes premium e ganha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</p>
       <button type="button" id="profileRenew" class="btn-grad full">Assinar premium · ${price}</button>
       <button type="button" class="btn-line full on-dark" data-go-digital>Ver artes premium</button>${notice}`;
   }
@@ -2135,6 +2152,15 @@ function orderLine(o){
   const sizes=Object.entries(p.sizes||{}).filter(([,q])=>q>0).map(([s,q])=>`${s}×${q}`).join(' ');
   return `${p.shirt_model||''} ${p.color||''} · ${sizes}`;
 }
+// Apagar de vez pedido cancelado (com os arquivos). Teve pagamento? Avisa antes.
+async function admForget(url,method,list){
+  const hadPay=list.filter(o=>o.payment_status!=='PENDING').length;
+  const q=`Apagar de vez ${list.length===1?`o pedido ${list[0].order_number}`:`${list.length} pedidos cancelados`} e os arquivos? Não tem volta.`
+    +(hadPay?`\n\nAtenção: ${hadPay} deles teve pagamento (estornado ou recebido). O registro some daqui; o comprovante continua no Mercado Pago.`:'');
+  if(!confirm(q)) return;
+  try{ const d=await admFetch(url,{method}); loadOrders(); alert(`${d.removed} pedido(s) apagado(s).`); }
+  catch(e){ alert(e.message); }
+}
 // Cancelar (Admin): pago pelo Mercado Pago pode devolver o dinheiro na hora.
 function openCancelOrder(o){
   if(!o) return;
@@ -2241,6 +2267,7 @@ function renderOrders(){
           :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.status==='CANCELADO'&&o.cancel_by?`<small>${o.payment_status==='REFUNDED'?'estornado · ':''}por ${esc(o.cancel_by)}${o.cancel_reason&&o.cancel_by!=='cliente'?` · ${esc(o.cancel_reason)}`:''}</small>`:''}${o.status!=='CANCELADO'&&o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
         <td class="adm-actions">${waCell(o)}${placementSides(o).length?`<button type="button" class="adm-btn sm adm-pos-btn" data-place="${o.id}" title="Onde o cliente posicionou o DTF na camisa">Ver posição</button>`:''}${adminRole==='admin'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${adminRole==='admin'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm danger" data-cancel="${o.id}">Cancelar</button>`:''}
+          ${adminRole==='admin'&&o.status==='CANCELADO'?`<button type="button" class="adm-btn sm danger" data-forget="${o.id}">Apagar</button>`:''}
           ${o.sale_type!=='PREMIUM_SUB'?`<button type="button" class="adm-btn sm ghost" data-files="${o.id}" data-name="${esc(o.order_number)}" title="Artes e dados do pedido num .zip">Baixar ZIP</button>`:''}</td>
       </tr>`;}).join('')}</tbody></table>`
     :`<p class="adm-empty">${ADM.orders.length?'Nenhum pedido com esse filtro.':'Nenhum pedido ainda.'}</p>`;
@@ -2259,6 +2286,11 @@ function renderOrders(){
       setTimeout(renderOrders,300); }
     catch(e){ console.warn(e); }
   }));
+  const canc=ADM.orders.filter(o=>o.status==='CANCELADO');
+  $('#admClearCanceled').hidden=adminRole!=='admin'||!canc.length;
+  $('#admClearCanceled').textContent=`Apagar todos os cancelados (${canc.length})`;
+  $('#admClearCanceled').onclick=()=>admForget('/api/admin/orders/clear-canceled','POST',canc);
+  $$('#ordersTable [data-forget]').forEach(b=>b.onclick=()=>admForget(`/api/admin/orders/${b.dataset.forget}`,'DELETE',ADM.orders.filter(x=>x.id===b.dataset.forget)));
   $$('#ordersTable [data-cancel]').forEach(b=>b.onclick=()=>openCancelOrder(ADM.orders.find(x=>x.id===b.dataset.cancel)));
   $$('#ordersTable [data-pay]').forEach(b=>b.onclick=async()=>{
     // Libera a produção: com pagamento real no site, um clique errado sai caro.
@@ -2905,13 +2937,15 @@ function updateGangPieceButtons(){
   $('#gangFlipHBtn').disabled=!has;
   $('#gangFlipVBtn').disabled=!has;
 }
+// Premium ativo: desconto no metro do DTF (o servidor confere e cobra igual).
+const premiumDtfOff=()=>hasPremium()?Number(CONFIG.premium_dtf_discount)||0:0;
 function calcGangTotal(){
   if(!CONFIG||!gangPieces.length)return 0; // chapa vazia não tem preço (antes já mostrava o mínimo de 2 m)
   const meters=(gangHeightCm||0)/100;
   const tiers=(CONFIG.pricing&&CONFIG.pricing.dtf_gang_sheet_tiers)||[];
   let pricePerM=tiers.length?tiers[tiers.length-1].price_per_m:39.9;
   for(const t of tiers){ if(meters<=t.up_to_m){ pricePerM=t.price_per_m; break; } }
-  return Math.max(meters,0.1)*pricePerM;
+  return Math.max(meters,0.1)*pricePerM*(1-premiumDtfOff()/100);
 }
 function renderGangRulers(){
   const width=sheetWidthCm();

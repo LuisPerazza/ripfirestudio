@@ -767,3 +767,11 @@ dialog.placement-modal{width:min(980px,94vw)}
 .plink.danger{color:#b3261e}
 .check[hidden]{display:none!important}
 .adm-staff-edit label.check{display:flex;gap:10px;align-items:flex-start}.adm-staff-edit label.check input{width:auto;margin:3px 0 0;flex:none}
+
+/* Botão claro sobre o cartão escuro do premium (Minha conta): texto branco sumia no fundo claro */
+#profile .btn-line.on-dark{background:transparent;color:#fff;border-color:rgba(255,255,255,.4)}
+#profile .btn-line.on-dark:hover{border-color:#fff;color:#fff;background:rgba(255,255,255,.08)}
+.price-card #priceNote{display:block;margin-top:4px;color:#e9c8ff;font-weight:700}
+.price-card #priceNote[hidden]{display:none}
+.ppanel-actions{display:flex;gap:14px;align-items:center}
+#admClearCanceled{margin-left:auto}

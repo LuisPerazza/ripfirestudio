@@ -329,6 +329,10 @@ def init_db():
             con.execute("ALTER TABLE orders ADD COLUMN cancel_by TEXT NOT NULL DEFAULT ''")
             con.execute("ALTER TABLE orders ADD COLUMN cancel_at REAL NOT NULL DEFAULT 0")
             con.execute("ALTER TABLE orders ADD COLUMN cancel_reason TEXT NOT NULL DEFAULT ''")
+        if "customer_hidden" not in cols:
+            # O cliente apagou do histórico dele um pedido cancelado que teve pagamento
+            # (a loja continua vendo; o não pago some de vez).
+            con.execute("ALTER TABLE orders ADD COLUMN customer_hidden INTEGER NOT NULL DEFAULT 0")
         if "wa_notified_at" not in cols:
             # Quando a equipe mandou o "recebemos seu pedido" pelo WhatsApp, e quem mandou.
             con.execute("ALTER TABLE orders ADD COLUMN wa_notified_at REAL NOT NULL DEFAULT 0")
@@ -1087,10 +1091,17 @@ def write_dtf_report(order_number: str, customer_name: str, sources: list[dict[s
     return report_path
 
 
+def premium_dtf_discount() -> float:
+    """Desconto (%) no metro do DTF pra quem tem premium ativo. Padrão 10."""
+    pct = digital_cfg().get("premium_dtf_discount_pct")
+    return max(0.0, min(90.0, float(10 if pct is None else pct)))
+
+
 def calc_order_total(
     sale_type: str,
     data: dict[str, Any],
     digital_artwork_row: dict[str, Any] | None,
+    premium: bool = False,
 ) -> float:
     """Preço calculado aqui, com os valores do config.json. O total que o
     navegador manda é só a estimativa da tela: antes ele ia direto pro
@@ -1120,6 +1131,9 @@ def calc_order_total(
             if meters <= tier["up_to_m"]:
                 price_per_m = tier["price_per_m"]
                 break
+        if premium and premium_dtf_discount():
+            price_per_m = float(price_per_m) * (1 - premium_dtf_discount() / 100)
+            data["premium_dtf_discount_pct"] = premium_dtf_discount()
         return round(max(meters, 0.1) * float(price_per_m), 2)
 
     # Camiseta (FINISHED_SHIRT / DTF_PLUS_SHIRT): preço por peça.
@@ -1726,6 +1740,7 @@ def get_config() -> dict[str, Any]:
         # Só preço e duração: as pastas do Drive não saem do servidor.
         "premium_price": digital_cfg().get("premium_price_month"),
         "premium_days": digital_cfg().get("premium_days"),
+        "premium_dtf_discount": premium_dtf_discount(),
         # Com o Mercado Pago configurado, criar o pedido já leva pro pagamento.
         "online_payment": bool(mp_token()),
         # Com o Supabase Storage, as artes do pedido vão do navegador direto pra ele.
@@ -1874,7 +1889,7 @@ def get_profile(customer: dict[str, Any] = Depends(require_customer)) -> dict[st
     with db() as con:
         orders = con.execute(
             """SELECT * FROM orders
-               WHERE customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)
+               WHERE (customer_id=? OR (customer_id IS NULL AND lower(customer_email)=?)) AND customer_hidden=0
                ORDER BY created_at DESC""",
             (customer["id"], legacy_email(customer))
         ).fetchall()
@@ -2140,14 +2155,67 @@ def delete_customer_account(customer: dict[str, Any]) -> int:
         con.execute("UPDATE privacy_requests SET customer_id=NULL WHERE customer_id=?", (customer["id"],))
         con.execute("DELETE FROM customers WHERE id=?", (customer["id"],))
     for o in unpaid:
-        report_dir = SOMENTE_DTF_DIR / f"{o['order_number']}__{safe_name(o['customer_name'])}"
-        if o["folder_path"]:
-            shutil.rmtree(o["folder_path"], ignore_errors=True)
-            cloud_delete_dir(o["folder_path"])
-        shutil.rmtree(report_dir, ignore_errors=True)
-        cloud_delete_dir(report_dir)
+        remove_order_files(o)
     cleanup_staged_uploads(customer["id"], max_age=0)
     return len(unpaid)
+
+
+def remove_order_files(o: dict[str, Any]):
+    """Apaga do disco e do Storage as pastas de um pedido que saiu do banco."""
+    report_dir = SOMENTE_DTF_DIR / f"{o['order_number']}__{safe_name(o['customer_name'])}"
+    for folder in (o.get("folder_path"), o.get("production_drop_path"), str(report_dir)):
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
+            cloud_delete_dir(folder)
+
+
+# ---------- Apagar do histórico os pedidos cancelados ----------
+# Cliente: o cancelado que nunca foi pago some de vez (com os arquivos); o que
+# teve pagamento (estornado) só sai da lista dele, a loja guarda o registro.
+# Admin: apaga de vez qualquer cancelado.
+def forget_canceled(rows: list[dict[str, Any]], by_customer: bool) -> int:
+    gone = [r for r in rows if r["status"] == "CANCELADO" and (not by_customer or r["payment_status"] == "PENDING")]
+    hide = [r for r in rows if by_customer and r["status"] == "CANCELADO" and r["payment_status"] != "PENDING"]
+    with db() as con:
+        con.executemany("DELETE FROM orders WHERE id=?", [(r["id"],) for r in gone])
+        con.executemany("UPDATE orders SET customer_hidden=1 WHERE id=?", [(r["id"],) for r in hide])
+    for r in gone:
+        remove_order_files(r)
+    return len(gone) + len(hide)
+
+
+@app.delete("/api/me/orders/{order_id}")
+def customer_forget_order(order_id: str, customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    row = load_order(order_id)
+    if not row or not order_is_customers(row, customer):
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["status"] != "CANCELADO":
+        raise HTTPException(400, "Só pedido cancelado sai do histórico.")
+    return {"ok": True, "removed": forget_canceled([row], by_customer=True)}
+
+
+@app.post("/api/me/orders/clear-canceled")
+def customer_clear_canceled(customer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+    with db() as con:
+        rows = [dict(r) for r in customer_orders(con, customer) if r["status"] == "CANCELADO"]
+    return {"ok": True, "removed": forget_canceled(rows, by_customer=True)}
+
+
+@app.delete("/api/admin/orders/{order_id}", dependencies=[Depends(require_admin)])
+def admin_forget_order(order_id: str) -> dict[str, Any]:
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["status"] != "CANCELADO":
+        raise HTTPException(400, "Só pedido cancelado pode ser apagado. Cancele antes.")
+    return {"ok": True, "removed": forget_canceled([row], by_customer=False)}
+
+
+@app.post("/api/admin/orders/clear-canceled", dependencies=[Depends(require_admin)])
+def admin_clear_canceled() -> dict[str, Any]:
+    with db() as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM orders WHERE status='CANCELADO'").fetchall()]
+    return {"ok": True, "removed": forget_canceled(rows, by_customer=False)}
 
 
 @app.get("/api/admin/lgpd/requests", dependencies=[Depends(require_admin)])
@@ -3004,7 +3072,8 @@ async def create_order(
                 )
 
         data["tracking"] = clean_tracking(data.get("tracking"), request)
-        data["total"] = calc_order_total(sale_type, data, digital_artwork_row)
+        data["total"] = calc_order_total(sale_type, data, digital_artwork_row,
+                                         premium=float(buyer.get("premium_until") or 0) > time.time())
         data["order_number"] = order_number
         data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         data["status"] = "AGUARDANDO_PAGAMENTO"

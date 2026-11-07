@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=74">
-  <link rel="stylesheet" href="/static/dark.css?v=19">
+  <link rel="stylesheet" href="/static/styles.css?v=75">
+  <link rel="stylesheet" href="/static/dark.css?v=20">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -78,7 +78,7 @@
           <label for="shirtColor">Cor</label><select id="shirtColor"></select>
           <label id="sizeLabel">Quantidades por tamanho</label><small class="size-hint" id="sizeHint">Clique no tamanho pra ver a área máxima de impressão.</small><div id="sizeGrid" role="group" aria-labelledby="sizeLabel" aria-describedby="sizeHint"></div>
         </div>
-        <div class="price-card"><span>Total estimado</span><strong id="priceTotal">R$ 0,00</strong></div>
+        <div class="price-card"><span>Total estimado</span><strong id="priceTotal">R$ 0,00</strong><small id="priceNote" hidden></small></div>
       </section>
 
       <section class="workspace shirt-only" id="shirtWorkspace">
@@ -255,7 +255,7 @@
     <div id="profileLayout" class="profile-layout">
       <div class="profile-main">
         <section id="profileOrdersPanel" class="ppanel">
-          <div class="ppanel-head"><h2>Meus pedidos</h2><button type="button" id="profileOrdersMore" class="plink" data-pview="orders">Ver todos →</button></div>
+          <div class="ppanel-head"><h2>Meus pedidos</h2><span class="ppanel-actions"><button type="button" id="clearCanceledOrders" class="plink danger" hidden>Apagar cancelados</button><button type="button" id="profileOrdersMore" class="plink" data-pview="orders">Ver todos →</button></span></div>
           <div id="profileOrders"></div>
         </section>
         <section id="profileDownloadsPanel" class="ppanel">
@@ -349,6 +349,7 @@
         <div class="adm-toolbar">
           <input id="ordersSearch" class="adm-search" type="search" placeholder="Buscar por número, cliente ou e-mail" aria-label="Buscar pedido">
           <div id="ordersFilters" class="adm-chips" role="group" aria-label="Filtrar por etapa"></div>
+          <button type="button" id="admClearCanceled" class="adm-btn sm danger" hidden>Apagar todos os cancelados</button>
         </div>
         <div id="ordersTable" class="adm-table-wrap"></div>
         <details id="waMsgCard" class="adm-card adm-wa-card" hidden>
@@ -670,7 +671,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=75"></script>
+<script src="/static/app.js?v=76"></script>
 <script src="/static/senha.js?v=3"></script>
 </body>
 </html>
