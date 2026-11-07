@@ -672,7 +672,7 @@ def check_staff_password(request: Request, user: str, password: str) -> dict[str
     # Sem usuário certo, confere um hash qualquer: o tempo de resposta não entrega quem existe.
     ok = admin_key_matches(password, account["key"] if account else _DUMMY_HASH)
     if not account or not ok:
-        login_failed(fail_keys, "Usuário ou senha de admin inválidos.")
+        login_failed(fail_keys, "Usuário ou senha inválidos.")
     return account
 
 

@@ -10,8 +10,9 @@ prontos para o RIP.
 ## Rodar no PC
 
 Dê dois cliques em `start.bat`. Ele cria o ambiente Python, instala as
-dependências e abre `http://127.0.0.1:8787`. O Admin fica em
-`http://127.0.0.1:8787/#admin`.
+dependências e abre `http://127.0.0.1:8787`. Para o Admin, clique em
+**Entrar** e use o usuário da equipe (sem @) no lugar do e-mail; o botão
+**Admin** aparece no menu depois de entrar.
 
 Antes da primeira vez:
 

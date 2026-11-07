@@ -543,14 +543,18 @@
           <div class="auth-divider"><span>ou com e-mail</span></div>
         </div>
         <div id="authLoginForm" class="auth-pane">
-          <label class="sr-only" for="loginEmail">E-mail</label><input id="loginEmail" placeholder="E-mail" type="email" autocomplete="email">
+          <label class="sr-only" for="loginEmail">E-mail</label><input id="loginEmail" placeholder="E-mail" type="text" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false">
           <label class="sr-only" for="loginPassword">Senha</label><input id="loginPassword" placeholder="Senha" type="password" autocomplete="current-password">
+          <div id="loginCodeWrap" class="adm-code" hidden>
+            <label for="loginCode">Código do app autenticador</label>
+            <input id="loginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000">
+          </div>
           <button type="button" id="loginSubmitBtn" class="primary full">Entrar</button>
           <button type="button" id="forgotLink" class="link-btn">Esqueci minha senha</button>
         </div>
         <div id="authForgotForm" class="auth-pane" hidden>
           <p class="auth-hint">Digite o e-mail da sua conta. Enviamos um link para você criar uma senha nova.</p>
-          <label class="sr-only" for="forgotEmail">E-mail</label><input id="forgotEmail" placeholder="E-mail" type="email" autocomplete="email">
+          <label class="sr-only" for="forgotEmail">E-mail</label><input id="forgotEmail" placeholder="E-mail" type="text" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false">
           <button type="button" id="forgotSubmitBtn" class="primary full">Enviar link</button>
           <button type="button" id="forgotBack" class="link-btn">Voltar para entrar</button>
         </div>
@@ -571,22 +575,6 @@
       <small class="auth-legal">Ao criar a conta ou entrar com o Google, você concorda com os <a href="/termos" target="_blank">Termos de Serviço</a> e declara que leu a <a href="/privacidade" target="_blank">Política de Privacidade</a>.</small>
       <div id="authStatus" role="status" aria-live="polite"></div>
     </div>
-  </form>
-</dialog>
-
-<dialog id="adminLoginModal">
-  <form method="dialog" class="modal-card auth-card">
-    <button class="close" value="cancel" aria-label="Fechar">×</button>
-    <h2>Entrar no Admin</h2>
-    <label class="sr-only" for="adminUser">Usuário</label><input id="adminUser" placeholder="Usuário" autocomplete="username">
-    <label class="sr-only" for="adminPassword">Senha</label><input id="adminPassword" placeholder="Senha" type="password" autocomplete="current-password">
-    <div id="adminCodeWrap" class="adm-code" hidden>
-      <label for="adminCode">Código do app autenticador</label>
-      <input id="adminCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000">
-    </div>
-    <button type="button" id="adminLoginBtn" class="primary full">Entrar</button>
-    <button type="button" id="adminForgotLink" class="link-btn">Esqueci minha senha</button>
-    <div id="adminLoginStatus" role="status" aria-live="polite"></div>
   </form>
 </dialog>
 
@@ -616,6 +604,6 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=64"></script>
+<script src="/static/app.js?v=65"></script>
 </body>
 </html>

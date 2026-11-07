@@ -22,6 +22,8 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 const TAB_TITLES={home:'Início',editor:'Personalizar',digital:'Artes digitais',profile:'Minha conta',admin:'Admin'};
 // Troca de tela (o site é uma página só: cada "aba" é uma <section class="tab">).
 function tab(id){
+  // O Admin não tem endereço próprio: só abre para quem entrou com um login da equipe.
+  if(id==='admin'&&!adminKey){ openAdminLogin(); return; }
   document.title=`${TAB_TITLES[id]||'Ripfire'} · Ripfire Studio`;
   if(id!=='admin'){
     countPage(id);
@@ -33,11 +35,6 @@ function tab(id){
   document.body.classList.toggle('is-editor',id==='editor');
   document.body.classList.toggle('is-digital',id==='digital');
   $('#navAccount').classList.toggle('current',id==='profile');
-  const wantHash=id==='admin'?'#admin':'';
-  if(location.hash!==wantHash && (id==='admin'||location.hash==='#admin')){
-    history.replaceState(null,'',location.pathname+location.search+wantHash);
-    syncAdminUi();
-  }
   if(id==='editor') positionPrintArea();
   if(id==='admin') enterAdmin();
   if(id==='profile'){ stat('#profileNotice','',true); loadProfile(); }
@@ -268,6 +265,7 @@ function switchAuthTab(tabName){
   $('#authLoginForm').hidden = tabName!=='login';
   $('#authRegisterForm').hidden = tabName!=='register';
   $('#authForgotForm').hidden = true;
+  $('#loginCodeWrap').hidden = true; $('#loginCode').value = '';
   $('#authGuest').classList.remove('forgot-mode');
   $('#authTitle').textContent = tabName==='login' ? 'Bem-vindo de volta' : 'Crie sua conta';
   $('#authSubtitle').textContent = tabName==='login' ? 'Entre para baixar artes e finalizar seus pedidos.' : 'Leva menos de um minuto e já libera as artes grátis.';
@@ -328,8 +326,9 @@ async function submitForgot(){
   const email=$('#forgotEmail').value.trim();
   if(!email) return stat('#authStatus','Digite o seu e-mail.',false);
   const btn=$('#forgotSubmitBtn'); btn.disabled=true;
+  const staff=!email.includes('@');
   try{
-    const r=await fetch('/api/auth/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
+    const r=await fetch(staff?'/api/admin/forgot':'/api/auth/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(staff?{user:email}:{email})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d.detail||'Não foi possível enviar agora.');
     stat('#authStatus',d.message,true);
@@ -363,7 +362,7 @@ async function submitReset(){
     if(!r.ok) throw new Error(d.detail||'Não foi possível salvar.');
     if(resetCtx.admin){
       stat('#resetStatus','Senha alterada! Entre no Admin com a senha nova.',true);
-      setTimeout(()=>{ $('#resetModal').close(); location.hash='#admin'; openAdminLogin(); $('#adminUser').value=d.user||''; },1200);
+      setTimeout(()=>{ $('#resetModal').close(); openAdminLogin(); $('#loginEmail').value=d.user||''; $('#loginPassword').focus(); },1200);
     }else{
       currentCustomer=d; saveCustomerToStorage(); renderAccountBoxes();
       stat('#resetStatus','Senha alterada! Você já está logado.',true);
@@ -372,19 +371,13 @@ async function submitReset(){
   }catch(e){ stat('#resetStatus',e.message,false); }
   finally{ btn.disabled=false; }
 }
-async function submitAdminForgot(){
-  const who=$('#adminUser').value.trim();
-  if(!who) return stat('#adminLoginStatus','Digite o seu usuário ou e-mail no primeiro campo.',false);
-  try{
-    const r=await fetch('/api/admin/forgot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:who})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.detail||'Não foi possível enviar agora.');
-    stat('#adminLoginStatus',d.message,true);
-  }catch(e){ stat('#adminLoginStatus',e.message,false); }
-}
 async function submitLogin(){
   const email=$('#loginEmail').value.trim(), password=$('#loginPassword').value;
   if(!email||!password) return stat('#authStatus','Preencha e-mail e senha.',false);
+  if(!email.includes('@')){
+    try{ await submitStaffLogin(email,password); }catch(e){ stat('#authStatus',e.message,false); }
+    return;
+  }
   try{
     const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
     const d=await r.json().catch(()=>({}));
@@ -482,19 +475,16 @@ function bind(){
   $$('.auth-tab').forEach(b=>b.onclick=()=>switchAuthTab(b.dataset.authtab));
   $('#loginSubmitBtn').onclick=submitLogin;$('#registerSubmitBtn').onclick=submitRegister;
   bindMaskedInput($('#regPhone'),formatPhoneBR);bindMaskedInput($('#regDocument'),formatCpfCnpj);
-  $('#adminLoginBtn').onclick=submitAdminLogin;
   $('#googleConsentBtn').onclick=()=>{saveConsent({...(getConsent()||{}),google:true});googleInitAttempts=0;ensureGoogleButton()};
   // Enter dentro de um <form method="dialog"> "clica" no primeiro botão do
   // form, que é o × de fechar: o modal sumia em vez de entrar/cadastrar.
   const onEnter=(sels,fn)=>sels.forEach(s=>$(s).addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();fn()}}));
-  onEnter(['#loginEmail','#loginPassword'],submitLogin);
+  onEnter(['#loginEmail','#loginPassword','#loginCode'],submitLogin);
   bindThemeToggle();
   $('#forgotLink').onclick=showForgot; $('#forgotBack').onclick=()=>switchAuthTab('login');
   $('#forgotSubmitBtn').onclick=submitForgot; onEnter(['#forgotEmail'],submitForgot);
   $('#resetSubmitBtn').onclick=submitReset; onEnter(['#resetPass1','#resetPass2'],submitReset);
-  $('#adminForgotLink').onclick=submitAdminForgot;
   onEnter(['#regName','#regEmail','#regPassword','#regPhone','#regCep','#regNumber','#regDocument'],submitRegister);
-  onEnter(['#adminUser','#adminPassword','#adminCode'],submitAdminLogin);
   $('#saleType').onchange=()=>{toggleSale();updatePrice()};$('#shirtColor').onchange=updateShirtVisual;$('#sizeGrid').oninput=updatePrice;
   $$('#sideTabs [data-side]').forEach(b=>b.onclick=()=>selectSide(b.dataset.side));
   const addShirtFile=f=>{if(!f)return;if(!f.type.startsWith('image/'))return alert('Selecione um arquivo de imagem (PNG, JPG ou WEBP).');addImage(URL.createObjectURL(f),'UPLOAD').catch(err=>alert(err.message))};
@@ -1385,45 +1375,47 @@ function restoreAdminSession(){
 function clearAdmin(){adminKey=null;adminUser=null;adminRole=null;saveAdminSession();syncAdminUi()}
 async function logoutAdmin(){
   if(adminKey) await fetch('/api/admin/logout',{method:'POST',headers:adminHeaders()}).catch(()=>{});
-  clearAdmin(); history.replaceState(null,'',location.pathname); tab('home');
+  clearAdmin(); tab('home');
 }
-// O botão Admin fica escondido dos clientes: aparece abrindo o site com
-// #admin no fim do endereço (ex.: http://127.0.0.1:8787/#admin) ou depois
-// de entrar. Mover/redimensionar a área de impressão grava no mockup, então
-// essas alças também só aparecem pro admin logado.
+// O Admin entra pelo mesmo "Entrar" dos clientes, com o usuário da equipe no
+// lugar do e-mail. O botão Admin só aparece no menu depois disso (e some ao
+// sair). Mover/redimensionar a área de impressão grava no mockup, então essas
+// alças também só aparecem pro admin logado.
 function syncAdminUi(){
   const logged=!!adminKey;
-  // O botão Admin só aparece em /#admin: no site normal ninguém vê, nem o admin logado.
-  $('.nav-btn[data-tab="admin"]').hidden=location.hash!=='#admin';
+  $('.nav-btn[data-tab="admin"]').hidden=!logged;
+  if(!logged&&$('#admin').classList.contains('active')) tab('home');
   $('#printAreaMove').hidden=!logged;
   $('#printAreaResize').hidden=!logged;
   renderLibrary(); // "Excluir arte" só aparece pro admin
 }
-function openAdminFromHash(){syncAdminUi();if(location.hash==='#admin')tab('admin')}
-function openAdminLogin(){
-  $('#adminUser').value=''; $('#adminPassword').value=''; $('#adminCode').value=''; $('#adminCodeWrap').hidden=true;
-  $('#adminLoginStatus').textContent=''; $('#adminLoginStatus').className='';
-  $('#adminLoginModal').showModal();
-}
-async function submitAdminLogin(){
-  const user=$('#adminUser').value.trim(), pass=$('#adminPassword').value, code=$('#adminCode').value.trim();
-  if(!user || !pass) return stat('#adminLoginStatus','Usuário ou senha inválidos.',false);
-  const btn=$('#adminLoginBtn'); btn.disabled=true;
-  try{
-    const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,password:pass,code})});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) return stat('#adminLoginStatus', d.detail||'Usuário ou senha inválidos.', false); // traz quantas tentativas sobram
-    if(d.need_code){
-      $('#adminCodeWrap').hidden=false; $('#adminCode').focus();
-      return stat('#adminLoginStatus','Digite o código de 6 dígitos do app autenticador.',true);
-    }
-    adminKey=d.token; adminUser=d.user; adminRole=d.role; saveAdminSession();
-  }catch(e){ return stat('#adminLoginStatus','Não foi possível falar com o servidor.',false); }
-  finally{ btn.disabled=false; }
+function openAdminFromHash(){
+  // Endereço antigo /#admin: não abre mais nada, só limpa o endereço.
+  if(location.hash==='#admin') history.replaceState(null,'',location.pathname+location.search);
   syncAdminUi();
-  stat('#adminLoginStatus','Login realizado!',true);
-  setTimeout(()=>$('#adminLoginModal').close(),400);
-  enterAdmin();
+}
+function openAdminLogin(msg){
+  if(currentCustomer){ // conta de cliente aberta: o Entrar mostra a conta, não o login
+    alert('Saia da conta de cliente para entrar com o login da equipe.'); return;
+  }
+  openAuthModal();
+  if(msg) stat('#authStatus',msg,false);
+}
+// Login sem "@" é da equipe: usuário, senha e, se ligado, o código do 2FA.
+async function submitStaffLogin(user,password){
+  const code=$('#loginCode').value.trim();
+  const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,password,code})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.detail||'Usuário ou senha inválidos.'); // traz quantas tentativas sobram
+  if(d.need_code){
+    $('#loginCodeWrap').hidden=false; $('#loginCode').focus();
+    return stat('#authStatus','Digite o código de 6 dígitos do app autenticador.',true);
+  }
+  adminKey=d.token; adminUser=d.user; adminRole=d.role; saveAdminSession();
+  $('#loginCode').value=''; $('#loginCodeWrap').hidden=true; $('#loginPassword').value='';
+  syncAdminUi();
+  stat('#authStatus','Login realizado!',true);
+  setTimeout(()=>{ $('#authModal').close(); tab('admin'); },400);
 }
 // Resposta de erro sem JSON (ex.: o nginx barra arquivo grande com um 413 em HTML).
 const uploadError=(r,d)=>d.detail||(r.status===413?'Arquivo grande demais para enviar.':`Erro ${r.status}.`);
@@ -1962,7 +1954,7 @@ function orderStageKey(o){
 }
 async function admFetch(url,opts={}){
   const r=await fetch(url,{...opts,headers:adminHeaders(opts.headers)}), d=await r.json().catch(()=>({}));
-  if(r.status===401){ clearAdmin(); openAdminLogin(); throw new Error('Entre no Admin de novo.'); }
+  if(r.status===401){ clearAdmin(); openAdminLogin('Sua sessão da equipe terminou. Entre de novo.'); throw new Error('Entre de novo.'); }
   if(!r.ok) throw new Error(d.detail||'Erro ao falar com o servidor.');
   return d;
 }
@@ -2147,7 +2139,7 @@ function renderOrders(){
     b.disabled=true;
     try{
       const r=await fetch(`/api/admin/orders/${b.dataset.files}/files`,{headers:adminHeaders()});
-      if(r.status===401){ clearAdmin(); return openAdminLogin(); }
+      if(r.status===401){ clearAdmin(); return openAdminLogin('Sua sessão da equipe terminou. Entre de novo.'); }
       if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.detail||'Erro ao baixar os arquivos do pedido'); }
       const a=document.createElement('a'); a.href=URL.createObjectURL(await r.blob()); a.download=`pedido_${b.dataset.name}.zip`; a.click();
       setTimeout(()=>URL.revokeObjectURL(a.href),10000);
