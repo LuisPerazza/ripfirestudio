@@ -37,6 +37,9 @@ COMMON_WORDS = sorted({
 KEYBOARD_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm", "1qaz2wsx3edc4rfv", "qazwsxedc"]
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 DIGITS = "0123456789"
+# Só letras sem acento, números e estes símbolos: sem espaço, _ ou -.
+ALLOWED = re.compile(r"[A-Za-z0-9!@#$%]+")
+BAD_CHARS = "Use só letras (sem acento), números e os símbolos ! @ # $ % (sem espaço, _ ou -)."
 
 
 def _plain(text: str) -> str:
@@ -116,6 +119,8 @@ def password_problem(password: str, personal: tuple[str, ...] | list[str] = (), 
     """Motivo (em português) pra recusar a senha, ou None se ela serve.
     personal: nome, e-mail, usuário... strong=True pede mais (equipe)."""
     raw = password or ""
+    if not ALLOWED.fullmatch(raw):
+        return BAD_CHARS
     low = _plain(raw)
     norm = _norm(raw)
     if len(set(low)) < (6 if strong else 4):
@@ -134,5 +139,5 @@ def password_problem(password: str, personal: tuple[str, ...] | list[str] = (), 
     need = 6 if strong else 4
     if len(rest) < need or len(set(rest)) < (4 if strong else 3):
         return ("Senha fácil de adivinhar: evite sequências (abc, 123, qwerty), datas, palavras como "
-                "\"senha\" ou \"admin\" e trocas tipo s3nh4. Uma frase curta com palavras soltas funciona bem.")
+                "\"senha\" ou \"admin\" e trocas tipo s3nh4. Junte palavras que não combinam, com maiúsculas e um símbolo (ex.: GatoTijoloNuvem#7).")
     return None

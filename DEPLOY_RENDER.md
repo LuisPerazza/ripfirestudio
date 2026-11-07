@@ -187,7 +187,8 @@ lá um atalho do `sincronizar_producao.bat`.
   pra avisar enquanto digita): nada de sequência (abc, 123, qwerty), repetição,
   ano/data, palavra comum de senha (senha, admin, flamengo...), troca tipo s3nh4
   nem o próprio nome, e-mail ou usuário. Cliente: 8+ caracteres; equipe: 12+ e
-  regra mais dura. Vale ao criar ou trocar senha; senhas antigas continuam.
+  regra mais dura. Só letras sem acento, números e ! @ # $ % (sem espaço, _ ou -).
+  Vale ao criar ou trocar senha; senhas antigas continuam.
 - **Recuperar senha sem e-mail configurado**: o cliente pede pelo WhatsApp e o
   Admin (aba Clientes) gera o link de nova senha e envia pelo WhatsApp dele.
   Para a equipe, outro admin gera o link na aba Segurança.

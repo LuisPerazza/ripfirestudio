@@ -70,6 +70,7 @@ const RF_PWD=(()=>{
     return cutRuns(s).replace(/ /g,'');
   }
   return function problem(pw,personal=[],strong=false){
+    if(!/^[A-Za-z0-9!@#$%]+$/.test(String(pw||''))) return 'Use só letras (sem acento), números e os símbolos ! @ # $ % (sem espaço, _ ou -).';
     const low=plain(pw), norm=leet(low);
     if(new Set(low).size<(strong?6:4)) return 'A senha repete muitos caracteres. Misture letras e números diferentes.';
     if(repeated(low)||repeated(norm)) return 'A senha é um pedaço repetido (tipo 1212 ou abcabc). Escolha outra.';
@@ -77,7 +78,7 @@ const RF_PWD=(()=>{
     if(mine.some(w=>norm.includes(w))) return 'A senha não pode ter o seu nome, usuário ou e-mail.';
     const rest=strip(low,WORDS.concat(mine));
     if(rest.length<(strong?6:4)||new Set(rest).size<(strong?4:3))
-      return 'Senha fácil de adivinhar: evite sequências (abc, 123, qwerty), datas, palavras como "senha" ou "admin" e trocas tipo s3nh4. Uma frase curta com palavras soltas funciona bem.';
+      return 'Senha fácil de adivinhar: evite sequências (abc, 123, qwerty), datas, palavras como "senha" ou "admin" e trocas tipo s3nh4. Junte palavras que não combinam, com maiúsculas e um símbolo (ex.: GatoTijoloNuvem#7).';
     return null;
   };
 })();
