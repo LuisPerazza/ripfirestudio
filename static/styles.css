@@ -756,3 +756,5 @@ dialog.placement-modal{width:min(980px,94vw)}
 .pos-img{min-height:200px;display:flex;align-items:center;justify-content:center;background:#efefec;border-radius:12px;overflow:hidden;color:var(--muted);font-size:13px}
 .pos-img img{display:block;width:100%;height:auto}
 .adm-actions .adm-pos-btn{margin-right:6px}
+
+.adm-staff-edit label{display:block;margin:10px 0}.adm-staff-edit label input,.adm-staff-edit label select{width:100%;margin-top:4px}

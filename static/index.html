@@ -6,7 +6,7 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=68">
+  <link rel="stylesheet" href="/static/styles.css?v=69">
   <link rel="stylesheet" href="/static/dark.css?v=15">
   <script src="/static/theme.js?v=1"></script>
 </head>
@@ -465,7 +465,7 @@
         <div class="adm-card" id="staffCard">
           <div class="adm-card-head"><h3>Equipe e permissões</h3></div>
           <div id="configLoginsBox" class="adm-hint" hidden></div>
-          <p class="adm-note"><b>Admin</b> vê e muda tudo. <b>Produção</b> só vê os pedidos, baixa os arquivos e muda a etapa: é o login do PC da impressão (programa de sincronizar).</p>
+          <p class="adm-note"><b>Admin</b> vê e muda tudo. <b>Impressão</b> só vê os pedidos (sem valores), baixa as artes, muda a etapa e avisa no WhatsApp. <b>Prensa</b> é igual, mas só pedidos com camiseta e com a foto da posição do DTF. <b>PC servidor</b> é só para o programa de sincronizar da pasta de rede (sem 2FA).</p>
           <div id="staffTable" class="adm-table-wrap"></div>
           <form id="staffForm" class="adm-staff-form">
             <label><span class="adm-label">Usuário</span><input id="staffUser" required pattern="[A-Za-z0-9._-]{3,40}" placeholder="ex.: impressao1" autocomplete="off"></label>
@@ -599,6 +599,19 @@
   </form>
 </dialog>
 
+<dialog id="staffEditModal">
+  <form id="staffEditForm" class="modal-card auth-card adm-staff-edit">
+    <button type="button" id="staffEditClose" class="close" aria-label="Fechar">×</button>
+    <h2 id="staffEditTitle">Editar usuário</h2>
+    <label><span class="adm-label">Papel</span><select id="staffEditRole"><option value="admin">Admin</option><option value="impressao">Impressão</option><option value="prensa">Prensa</option><option value="sync">PC servidor (sincronização)</option></select></label>
+    <p id="staffEditRoleHint" class="adm-note" hidden>O próprio papel não muda (peça a outro admin).</p>
+    <label><span class="adm-label">E-mail (obrigatório para Admin)</span><input id="staffEditEmail" type="email" autocomplete="off"></label>
+    <label><span class="adm-label">Senha nova (deixe em branco para manter)</span><input id="staffEditPass" type="password" minlength="12" autocomplete="new-password"></label>
+    <button class="primary full">Salvar</button>
+    <div id="staffEditStatus" role="status" aria-live="polite"></div>
+  </form>
+</dialog>
+
 <dialog id="resetLinkModal">
   <form method="dialog" class="modal-card auth-card">
     <button class="close" value="cancel" aria-label="Fechar">×</button>
@@ -625,7 +638,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=68"></script>
+<script src="/static/app.js?v=69"></script>
 <script src="/static/senha.js?v=1"></script>
 </body>
 </html>

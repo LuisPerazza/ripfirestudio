@@ -2440,15 +2440,38 @@ async function loadStaff(){
     ${list.map(u=>`<tr${u.active?'':' class="off"'}><td><b>${esc(u.user)}</b>${u.user===adminUser?' <small>(você)</small>':''}</td><td>${esc(u.email||'–')}</td><td>${esc(u.role_name)}</td>
       <td>${u.two_factor?'<span class="pos">Ligado</span>':'<span class="neg">Desligado</span>'}</td>
       <td>${u.source==='config'?(u.active?'config.json':'config.json (desligado)'):u.source==='duplicado'?'<span class="neg">Duplicado: o do config.json é que vale</span>':'Criado no Admin'}</td>
-      <td class="adm-actions">${u.source==='equipe'&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-stafflink="${esc(u.user)}">Link de nova senha</button>`:''}
+      <td class="adm-actions">${u.source==='equipe'?`<button type="button" class="adm-btn sm" data-staffedit="${esc(u.user)}">Editar</button>`:''}${u.source==='equipe'&&u.user!==adminUser?`<button type="button" class="adm-btn sm" data-stafflink="${esc(u.user)}">Link de nova senha</button>`:''}
         ${u.two_factor&&u.user!==adminUser&&u.source!=='duplicado'?`<button type="button" class="adm-btn sm" data-reset2fa="${esc(u.user)}">Zerar 2FA</button>`:''}
         ${(u.source==='equipe'&&u.user!==adminUser)||u.source==='duplicado'?`<button type="button" class="adm-btn sm danger" data-delstaff="${esc(u.user)}">Remover</button>`:''}</td></tr>`).join('')}
     </tbody></table>`;
   $$('[data-reset2fa]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Desligar o 2FA de ${b.dataset.reset2fa}? Use quando a pessoa perdeu o celular.`)) return;
     try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.reset2fa)}/2fa`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
+  $$('[data-staffedit]').forEach(b=>b.onclick=()=>openStaffEdit(list.find(u=>u.user===b.dataset.staffedit)));
   $$('[data-stafflink]').forEach(b=>b.onclick=()=>showResetLink(`/api/admin/staff/${encodeURIComponent(b.dataset.stafflink)}/reset-link`,b.dataset.stafflink));
   $$('[data-delstaff]').forEach(b=>b.onclick=async()=>{ if(!confirm(`Remover o usuário ${b.dataset.delstaff}?`)) return;
     try{ await admFetch(`/api/admin/staff/${encodeURIComponent(b.dataset.delstaff)}`,{method:'DELETE'}); loadStaff(); }catch(e){ stat('#staffStatus',e.message,false); } });
+}
+// Editar alguém da equipe: papel, e-mail e (se preencher) senha nova.
+function openStaffEdit(u){
+  if(!u) return;
+  const self=u.user===adminUser;
+  $('#staffEditTitle').textContent=`Editar ${u.user}`;
+  $('#staffEditRole').value=u.role; $('#staffEditRole').disabled=self;
+  $('#staffEditRoleHint').hidden=!self;
+  $('#staffEditEmail').value=u.email||''; $('#staffEditPass').value='';
+  $('#staffEditStatus').textContent=''; $('#staffEditStatus').className='';
+  $('#staffEditForm').onsubmit=async ev=>{
+    ev.preventDefault();
+    const body={email:$('#staffEditEmail').value.trim()};
+    if(!self) body.role=$('#staffEditRole').value;
+    if($('#staffEditPass').value) body.password=$('#staffEditPass').value;
+    try{
+      await admFetch(`/api/admin/staff/${encodeURIComponent(u.user)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      $('#staffEditModal').close(); stat('#staffStatus',`${u.user} atualizado.`,true); loadStaff();
+    }catch(e){ stat('#staffEditStatus',e.message,false); }
+  };
+  $('#staffEditClose').onclick=()=>$('#staffEditModal').close();
+  $('#staffEditModal').showModal();
 }
 async function addStaff(ev){
   ev.preventDefault();

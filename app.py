@@ -3290,6 +3290,52 @@ def staff_delete(user: str, staff: dict[str, Any] = Depends(require_admin_setup)
     return {"ok": True}
 
 
+class StaffUpdate(BaseModel):
+    role: str | None = None
+    email: str | None = None
+    password: str | None = None
+
+
+@app.patch("/api/admin/staff/{user}")
+def staff_update(user: str, payload: StaffUpdate, staff: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Admin muda o papel, o e-mail ou a senha de alguém criado no Admin."""
+    in_config = user in config_staff(include_disabled=True)
+    cfg_disabled = config_logins_disabled()
+    admins = db_admin_count()
+    if in_config:
+        raise HTTPException(400, "Esse usuário vem do config.json: a senha dele muda por lá (gerar-hash).")
+    with db() as con:
+        row = con.execute("SELECT username, role, email FROM staff_users WHERE username=?", (user,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Usuário não encontrado.")
+    cur_role = norm_role(row["role"])
+    role = cur_role if payload.role is None else payload.role
+    if role not in ROLES:
+        raise HTTPException(400, "Papel inválido.")
+    if role != cur_role and user == staff["user"]:
+        raise HTTPException(400, "Você não pode mudar o próprio papel (peça a outro admin).")
+    if cur_role == "admin" and role != "admin" and cfg_disabled and admins <= 1:
+        raise HTTPException(400, "É o último admin: crie outro antes de mudar o papel dele.")
+    email = (row["email"] or "") if payload.email is None else payload.email.strip().lower()
+    if email and not EMAIL_RE.fullmatch(email):
+        raise HTTPException(400, "E-mail inválido.")
+    if role == "admin" and not email:
+        raise HTTPException(400, "Admin precisa de e-mail (é por ele que a senha é recuperada).")
+    password = payload.password or ""
+    if password and len(password) < 12:
+        raise HTTPException(400, "Use pelo menos 12 caracteres na senha.")
+    with db() as con:
+        if email and con.execute("SELECT 1 FROM staff_users WHERE email=? AND username<>?", (email, user)).fetchone():
+            raise HTTPException(400, "Esse e-mail já é de outro usuário da equipe.")
+        con.execute("UPDATE staff_users SET role=?, email=? WHERE username=?", (role, email, user))
+        if password:
+            con.execute("UPDATE staff_users SET password_hash=? WHERE username=?", (hash_password(password), user))
+        if (password or role != cur_role) and user != staff["user"]:
+            # Senha ou papel novo: quem estava logado com esse usuário entra de novo.
+            con.execute("DELETE FROM staff_sessions WHERE username=?", (user,))
+    return {"ok": True, "user": user, "role": role, "role_name": ROLES[role], "email": email}
+
+
 class ConfigLogins(BaseModel):
     disabled: bool
 
