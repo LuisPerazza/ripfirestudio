@@ -521,6 +521,7 @@ function bind(){
   $('#centerSelected').onclick=()=>{if(selected){const r=limitRect();selected.x=r.x+r.w/2;selected.y=r.y+r.h/2;clampDragToCanvas(selected);render()}};$('#bringFront').onclick=()=>{if(selected){elements=elements.filter(e=>e!==selected);elements.push(selected);sidesElements[currentSide]=elements;render()}};
   $('#shirtHandleRotate').onclick=()=>{if(!selected)return;selected.rotation=((selected.rotation||0)+90)%360;clampResizeToCanvas(selected);clampDragToCanvas(selected);render()};
   $('#shirtHandleResize').onpointerdown=ev=>{if(!selected)return;ev.preventDefault();ev.stopPropagation();shirtResize={piece:selected,pointerId:ev.pointerId};canvas.setPointerCapture(ev.pointerId)};
+  $('#maxSelected').onclick=maxSelectedArt;
   bindPrintAreaDrag();
   canvas.onkeydown=shirtKeydown;
   // Alça de esticar pelo teclado: cada seta mexe só um eixo, como arrastar a alça.
@@ -745,6 +746,28 @@ function artFitsSize(side,size){
   const art=sideArtSizeCm(side), lim=sizeLimit(size);
   if(!art||!lim) return true;
   return art.w<=lim.w+0.05 && art.h<=lim.h+0.05;
+}
+// Botão "Tamanho máximo": a arte selecionada cresce (ou diminui) até o limite da
+// camisa, sem deformar. Vale o menor tamanho pedido (é o mais apertado, e o que
+// o pedido confere); sem quantidade, o tamanho clicado. Na manga, a área toda.
+function maxSelectedArt(){
+  if(!selected) return alert('Clique na arte primeiro.');
+  const e=selected, b=bounds(e), bw=b.maxX-b.minX, bh=b.maxY-b.minY;
+  if(!bw||!bh) return;
+  let limW=420, limH=480, used=null;
+  if(!isSleeve(currentSide)){
+    const ordered=Object.entries(sizeMap()).filter(([,q])=>q>0).map(([s])=>s).filter(sizeLimit);
+    used=ordered.length?ordered.reduce((a,c)=>sizeLimit(c).w<sizeLimit(a).w?c:a):currentSize;
+    if(!used||!sizeLimit(used)) return alert('Clique num tamanho (P, M, G...) ou coloque a quantidade, para eu saber o limite da camisa.');
+    const lim=sizeLimit(used);
+    limW=Math.min(420,lim.w/cmPerUnitX()); limH=Math.min(480,lim.h/cmPerUnitY());
+  }
+  const ratio=Math.min(limW/bw,limH/bh)*0.999;
+  if(e.type==='image'){ e.scaleX*=ratio; e.scaleY*=ratio; } else e.scale*=ratio;
+  clampDragToCanvas(e);
+  if(used&&used!==currentSize) selectSize(used); else render();
+  const s=bounds(e);
+  announce(`Arte no tamanho máximo${used?` do ${used}`:''}: ${fmtCm((s.maxX-s.minX)*cmPerUnitX())} por ${fmtCm((s.maxY-s.minY)*cmPerUnitY())} centímetros.`);
 }
 function selectSize(size){
   currentSize=size;
