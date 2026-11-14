@@ -1464,13 +1464,16 @@ let libQuery='', libSort='name', libArtSort='recent', premiumNotice=null;
 const LIB_SIDES=['free','premium'];
 const ACCESS_LABEL={free:'Grátis',premium:'Premium'};
 const hasPremium=()=>!!currentCustomer && (currentCustomer.premium_until||0)*1000>Date.now();
+// Admin logado vê e usa todas as artes como se fosse premium (pra testar o que sobe).
+const staffArts=()=>!!adminKey&&adminRole==='admin';
+const artsUnlocked=()=>hasPremium()||staffArts();
 const normTxt=v=>String(v||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const libCat=id=>library.categories.find(c=>c.id===id);
 const libSubs=id=>library.categories.filter(c=>c.parent_id===id);
 const libTotal=side=>libSubs(side).reduce((a,x)=>a+(x.art_count||0),0);
 const plural=(n,one,many)=>`${n} ${n===1?one:many}`;
 function libBadge(access){
-  if(access==='premium'&&hasPremium()) return '<span class="lib-badge total">Acesso total</span>';
+  if(access==='premium'&&artsUnlocked()) return '<span class="lib-badge total">Acesso total</span>';
   return `<span class="lib-badge ${access}">${ACCESS_LABEL[access]}</span>`;
 }
 async function loadLibrary(){
@@ -1541,7 +1544,7 @@ async function renderLibArts(cat){
     try{ const r=await fetch(`/api/library/categories/${cat.id}/arts`); libArts[cat.id]=r.ok?await r.json().catch(()=>({})):[]; }catch{ libArts[cat.id]=[]; }
     if(libView.subId!==cat.id||!$('#libArts')) return; // a pessoa já saiu desta pasta
   }
-  const locked=cat.access==='premium'&&!hasPremium();
+  const locked=cat.access==='premium'&&!artsUnlocked();
   const sorters={recent:(a,b)=>b.created_at-a.created_at,old:(a,b)=>a.created_at-b.created_at,name:(a,b)=>a.name.localeCompare(b.name,'pt-BR')};
   const arts=[...libArts[cat.id]].sort(sorters[libArtSort]||sorters.recent);
   arts.forEach(a=>{libArtIndex[a.id]={name:a.name,access:cat.access}});
@@ -1562,7 +1565,9 @@ async function renderLibArts(cat){
 }
 function renderLibraryPremium(){
   const box=$('#libraryPremium'), n=premiumNotice;
-  box.innerHTML=hasPremium()
+  box.innerHTML=!hasPremium()&&staffArts()
+    ? `<div><b>★ Acesso de Admin</b><br>Todas as artes liberadas para teste, sem precisar de conta de cliente.</div>`
+    : hasPremium()
     ? `<div><b>★ Premium ativo até ${fmtDate(currentCustomer.premium_until)}</b><br>Baixe e use todas as artes premium e tenha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</div>`
     : `<div><b>★ Premium</b> · Por <b>${money(CONFIG.premium_price)}</b> por mês você libera todas as artes premium e ganha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.
         ${n?`<div class="${n.ok?'success':'error'}">${esc(n.msg)}</div>`:''}</div>
@@ -1593,13 +1598,13 @@ async function subscribePremium(){
 }
 // Arquivo com o token da conta (sem conta o servidor recusa).
 async function fetchDigitalBlob(url){
-  const r=await fetch(url,{headers:customerHeaders()});
-  if(r.status===401){ logoutCustomer(); openAuthModal(); throw new Error('Entre na sua conta de novo.'); }
+  const r=await fetch(url,{headers:{...customerHeaders(),...(staffArts()?adminHeaders():{})}});
+  if(r.status===401){ if(staffArts()&&!currentCustomer) throw new Error('Sua sessão do Admin expirou. Entre de novo.'); logoutCustomer(); openAuthModal(); throw new Error('Entre na sua conta de novo.'); }
   if(!r.ok){ const d=await r.json().catch(()=>({})); if(r.status===403) refreshCustomer(); throw new Error(d.detail||'Não foi possível abrir a arte.'); }
   return r.blob();
 }
 async function downloadLibraryArt(id,btn,name){
-  if(!currentCustomer) return openAuthModal();
+  if(!currentCustomer&&!staffArts()) return openAuthModal();
   btn.disabled=true;
   try{
     const blob=await fetchDigitalBlob(`/api/library/arts/${id}/file?download=1`);
@@ -1613,7 +1618,7 @@ async function downloadLibraryArt(id,btn,name){
 }
 // Leva a arte original pro editor. premiumId fica nas fontes do pedido ("Minha conta" mostra a arte premium usada).
 async function useLibraryArt(ref,btn){
-  if(!currentCustomer) return openAuthModal();
+  if(!currentCustomer&&!staffArts()) return openAuthModal();
   const [id,saleType]=ref.split(':'), info=libArtIndex[id]||{name:'Arte',access:'free'};
   btn.disabled=true;
   try{
@@ -1645,7 +1650,7 @@ function renderArtPicker(){
       <span class="ap-side-icon" aria-hidden="true">${id==='premium'?'★':'↓'}</span><span><b>${esc(libCat(id)?.name||ACCESS_LABEL[id])}</b>
       <small>${plural(libTotal(id),'arte','artes')}</small></span>${id==='premium'?libBadge('premium'):''}</button>`).join('');
   $$('#apSides [data-ap-side]').forEach(b=>b.onclick=()=>{apView={side:b.dataset.apSide,subId:null};renderArtPicker()});
-  const prem=$('#apPremium'), locked=apView.side==='premium'&&!hasPremium();
+  const prem=$('#apPremium'), locked=apView.side==='premium'&&!artsUnlocked();
   prem.hidden=!locked;
   if(locked){
     prem.innerHTML=`<span><b>★ Premium</b> · Por <b>${money(CONFIG.premium_price)}</b> por mês você libera todas as artes premium e ganha ${CONFIG.premium_dtf_discount||10}% de desconto no metro do DTF.</span>
@@ -1679,7 +1684,7 @@ async function renderApArts(cat){
     try{ const r=await fetch(`/api/library/categories/${cat.id}/arts`); libArts[cat.id]=r.ok?await r.json().catch(()=>[]):[]; }catch{ libArts[cat.id]=[]; }
   }
   if(apView.subId!==cat.id||!$('#apArts')) return; // saiu da pasta enquanto carregava
-  const locked=cat.access==='premium'&&!hasPremium();
+  const locked=cat.access==='premium'&&!artsUnlocked();
   const arts=[...libArts[cat.id]].sort((a,b)=>b.created_at-a.created_at);
   arts.forEach(a=>{libArtIndex[a.id]={name:a.name,access:cat.access}});
   $('#apArts').innerHTML=arts.map(a=>`<button type="button" class="ap-art${locked?' locked':''}" data-ap-use="${a.id}" title="${esc(a.name)}">
@@ -1689,7 +1694,7 @@ async function renderApArts(cat){
   $$('#apArts [data-ap-use]').forEach(b=>b.onclick=()=>locked?($('#apStatus').textContent='Essa arte é premium. Assine para usar.'):pickArt(b.dataset.apUse,b));
 }
 async function pickArt(id,btn){
-  if(!currentCustomer){ $('#artPickerModal').close(); return openAuthModal(); }
+  if(!currentCustomer&&!staffArts()){ $('#artPickerModal').close(); return openAuthModal(); }
   const info=libArtIndex[id]||{name:'Arte',access:'free'}, premiumId=info.access==='premium'?id:null;
   $$('#apArts [data-ap-use]').forEach(b=>b.disabled=true);
   $('#apStatus').textContent=`Carregando "${info.name}"...`;

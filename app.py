@@ -2584,23 +2584,50 @@ def library_art_thumb(art_id: str):
     )
 
 
+def admin_from_headers(request: Request, x_admin_token: str | None) -> dict[str, Any] | None:
+    """Admin logado (com o 2FA em dia), ou None. Não acusa erro: serve pra rota
+    que aceita cliente OU admin."""
+    if not x_admin_token:
+        return None
+    try:
+        staff = staff_from_request(request, x_admin_token, None, None)
+    except HTTPException:
+        return None
+    if staff["role"] != "admin" or (admin_2fa_required() and not staff_has_2fa(staff["user"])):
+        return None
+    return staff
+
+
+def require_art_viewer(request: Request, x_customer_token: str | None = Header(None),
+                       x_admin_token: str | None = Header(None)) -> dict[str, Any]:
+    """Cliente logado ou Admin logado: quem pode abrir o arquivo de uma arte."""
+    admin = admin_from_headers(request, x_admin_token)
+    customer = customer_from_token(x_customer_token)
+    if not admin and not customer:
+        raise HTTPException(401, "Entre na sua conta de novo.")
+    return {"admin": admin, "customer": customer}
+
+
 @app.get("/api/library/arts/{art_id}/file")
-def library_art_file(art_id: str, download: bool = False, customer: dict[str, Any] = Depends(require_customer)):
+def library_art_file(art_id: str, download: bool = False, viewer: dict[str, Any] = Depends(require_art_viewer)):
     """Arquivo original (pra baixar ou usar no editor). Precisa de conta, e a
-    premium precisa do premium ativo. Cada download fica registrado com o cliente."""
+    premium precisa do premium ativo. Cada download fica registrado com o cliente.
+    Admin logado abre tudo, como se fosse premium (é como ele testa as artes)."""
+    admin, customer = viewer["admin"], viewer["customer"]
     art = library_art(art_id)
-    if art["access"] == "premium" and not premium_active(customer):
+    if art["access"] == "premium" and not admin and not premium_active(customer):
         raise HTTPException(403, "Essa arte é premium. Assine o premium para baixar e usar.")
     path = Path(art["file_path"])
     if not cloud_get(path):
         raise HTTPException(404, "Arquivo da arte não encontrado.")
     if not download:
         return FileResponse(path)
-    with db() as con:
-        con.execute(
-            "INSERT INTO digital_downloads (created_at,customer_id,art_id,art_name) VALUES(?,?,?,?)",
-            (time.time(), customer["id"], art_id, art["name"])
-        )
+    if customer:  # download de teste do admin, sem conta de cliente, não entra na contagem
+        with db() as con:
+            con.execute(
+                "INSERT INTO digital_downloads (created_at,customer_id,art_id,art_name) VALUES(?,?,?,?)",
+                (time.time(), customer["id"], art_id, art["name"])
+            )
     return FileResponse(path, filename=f"{art['name']}{path.suffix}")
 
 
@@ -4232,7 +4259,7 @@ PUBLIC_ROUTES = {
     # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
     ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
 }
-AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_staff_login", "require_customer"}
+AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_staff_login", "require_customer", "require_art_viewer"}
 
 
 def unprotected_routes() -> list[str]:
