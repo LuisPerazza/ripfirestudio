@@ -587,6 +587,7 @@ function renderSizeGrid(){
   if(grid.dataset.sizes===sizes.join(',')) return; // mesmos tamanhos: mantém as quantidades digitadas
   grid.dataset.sizes=sizes.join(',');
   if(!sizes.includes(currentSize)) currentSize=null;
+  updateViewFactor();
   grid.innerHTML=sizes.map(s=>`<div class="size-cell${s===currentSize?' active':''}" data-pick="${esc(s)}"><button type="button" class="size-pick" title="Ver área máxima do tamanho ${esc(s)}">${esc(s)}</button><input data-size="${esc(s)}" type="number" min="0" value="0" aria-label="Quantidade no tamanho ${esc(s)}"></div>`).join('');
   $$('#sizeGrid [data-pick]').forEach(cell=>{
     cell.querySelector('.size-pick').onclick=()=>selectSize(cell.dataset.pick);
@@ -752,27 +753,30 @@ function artFitsSize(side,size){
 // o pedido confere); sem quantidade, o tamanho clicado. Na manga, a área toda.
 function maxSelectedArt(){
   if(!selected) return alert('Clique na arte primeiro.');
-  const e=selected, b=bounds(e), bw=b.maxX-b.minX, bh=b.maxY-b.minY;
-  if(!bw||!bh) return;
+  const e=selected;
   let limW=420, limH=480, used=null;
   if(!isSleeve(currentSide)){
     const ordered=Object.entries(sizeMap()).filter(([,q])=>q>0).map(([s])=>s).filter(sizeLimit);
     used=ordered.length?ordered.reduce((a,c)=>sizeLimit(c).w<sizeLimit(a).w?c:a):currentSize;
     if(!used||!sizeLimit(used)) return alert('Clique num tamanho (P, M, G...) ou coloque a quantidade, para eu saber o limite da camisa.');
+    if(used!==currentSize) selectSize(used); // a escala da tela segue o tamanho usado
     const lim=sizeLimit(used);
     limW=Math.min(420,lim.w/cmPerUnitX()); limH=Math.min(480,lim.h/cmPerUnitY());
   }
+  const b=bounds(e), bw=b.maxX-b.minX, bh=b.maxY-b.minY; // depois de trocar a escala do tamanho
+  if(!bw||!bh) return;
   const ratio=Math.min(limW/bw,limH/bh)*0.999;
   if(e.type==='image'){ e.scaleX*=ratio; e.scaleY*=ratio; } else e.scale*=ratio;
   // Fica dentro do retângulo do limite (centralizado, a partir do topo).
   if(!isSleeve(currentSide)){ const nb=bounds(e); e.x+=210-(nb.minX+nb.maxX)/2; e.y+=limH/2-(nb.minY+nb.maxY)/2; }
   clampDragToCanvas(e);
-  if(used&&used!==currentSize) selectSize(used); else render();
+  render();
   const s=bounds(e);
   announce(`Arte no tamanho máximo${used?` do ${used}`:''}: ${fmtCm((s.maxX-s.minX)*cmPerUnitX())} por ${fmtCm((s.maxY-s.minY)*cmPerUnitY())} centímetros.`);
 }
 function selectSize(size){
   currentSize=size;
+  updateViewFactor();
   $$('#sizeGrid [data-pick]').forEach(c=>c.classList.toggle('active',c.dataset.pick===size));
   render();
 }
@@ -1099,7 +1103,29 @@ function addImage(url,origin,artworkId=null){
 function draw(e,c=ctx){c.save();c.translate(e.x,e.y);c.rotate(e.rotation*Math.PI/180);if(e.type==='image'){c.scale(e.scaleX,e.scaleY);c.drawImage(e.img,-e.w/2,-e.h/2,e.w,e.h)}else{c.scale(e.scale,e.scale);c.fillStyle=e.color;c.font=`900 ${e.fontSize}px Arial`;c.textAlign='center';c.textBaseline='middle';c.fillText(e.text,0,0)}c.restore()}
 function size(e){if(e.type==='image')return{w:e.w*e.scaleX,h:e.h*e.scaleY};ctx.font=`900 ${e.fontSize}px Arial`;return{w:ctx.measureText(e.text).width*e.scale,h:e.fontSize*1.2*e.scale}}
 function toLocal(e,x,y){const dx=x-e.x,dy=y-e.y,a=-e.rotation*Math.PI/180;return{x:dx*Math.cos(a)-dy*Math.sin(a),y:dx*Math.sin(a)+dy*Math.cos(a)}}
-function cmPerUnitX(side=currentSide){return isSleeve(side)?SLEEVE_PRINT_W_CM/420:(CONFIG.max_print_width_cm||60)/420}
+// Frente/costas: a escala muda com o tamanho clicado. A foto da camisa é a
+// mesma pra todos os tamanhos; numa camisa maior a mesma arte (em cm) aparece
+// menor, como fica de verdade. viewFactor=1 no tamanho de referência (M).
+let viewFactor=1;
+function cmPerUnitX(side=currentSide){return isSleeve(side)?SLEEVE_PRINT_W_CM/420:(CONFIG.max_print_width_cm||60)/420*viewFactor}
+function viewRefSize(){
+  const sizes=modelSizes()||[];
+  if(sizes.includes('M')) return 'M';
+  return sizes[Math.floor(sizes.length/2)]||null; // infantil: o tamanho do meio
+}
+// Recalcula a escala e ajusta as artes de frente e costas pra manterem a
+// medida em cm (encolhem ou crescem na tela, a partir da gola).
+function updateViewFactor(){
+  const ref=sizeLimit(viewRefSize()), lim=currentSize?sizeLimit(currentSize):null;
+  const nf=ref&&lim?lim.w/ref.w:viewFactor;
+  if(!nf||Math.abs(nf-viewFactor)<1e-6) return;
+  const k=viewFactor/nf;
+  for(const side of ['FRONT','BACK']) for(const e of sidesElements[side]||[]){
+    e.x=210+(e.x-210)*k; e.y*=k;
+    if(e.type==='image'){ e.scaleX*=k; e.scaleY*=k; } else e.scale*=k;
+  }
+  viewFactor=nf;
+}
 // Mesma escala na vertical e na horizontal: a arte não deforma e a etiqueta
 // em cm bate com o tamanho do arquivo de produção.
 function cmPerUnitY(side=currentSide){return cmPerUnitX(side)}
