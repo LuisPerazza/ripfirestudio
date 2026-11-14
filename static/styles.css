@@ -776,3 +776,8 @@ dialog.placement-modal{width:min(980px,94vw)}
 .ppanel-actions{display:flex;gap:14px;align-items:center}
 #admClearCanceled{margin-left:auto}
 #admin .adm-money input:first-child{padding-left:12px}
+
+/* Área máxima do tamanho clicado, desenhada em escala real dentro da área da camisa */
+.size-limit-box{position:absolute;left:50%;top:0;transform:translateX(-50%);outline:2px dashed #e23c3c;pointer-events:none;z-index:4}
+.size-limit-box[hidden]{display:none}
+#printArea.has-limit{outline:1px dashed rgba(226,60,60,.35)}

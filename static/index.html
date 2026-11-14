@@ -6,8 +6,8 @@
   <title>Ripfire Studio</title>
   <link rel="icon" type="image/png" href="/static/img/logo.png">
   <link rel="stylesheet" href="/static/fonts/fonts.css">
-  <link rel="stylesheet" href="/static/styles.css?v=76">
-  <link rel="stylesheet" href="/static/dark.css?v=21">
+  <link rel="stylesheet" href="/static/styles.css?v=77">
+  <link rel="stylesheet" href="/static/dark.css?v=22">
   <script src="/static/theme.js?v=1"></script>
 </head>
 <body class="is-home">
@@ -107,8 +107,11 @@
             </div>
             <div id="printAreaMove" class="print-area-move" title="Mover área de impressão" tabindex="0" role="button" aria-label="Mover a área de impressão: use as setas" hidden>✥</div>
             <div id="printAreaResize" class="mockup-box-resize" title="Redimensionar área de impressão" tabindex="0" role="button" aria-label="Redimensionar a área de impressão: use as setas" hidden></div>
-            <div id="limitLabelW" class="limit-label limit-label-w" hidden></div>
-            <div id="limitLabelH" class="limit-label limit-label-h" hidden></div>
+            <!-- Área máxima do tamanho clicado, em escala real (some quando não tem tamanho escolhido). -->
+            <div id="sizeLimitBox" class="size-limit-box" hidden>
+              <div id="limitLabelW" class="limit-label limit-label-w" hidden></div>
+              <div id="limitLabelH" class="limit-label limit-label-h" hidden></div>
+            </div>
           </div>
         </div>
         <div class="shirt-help">
@@ -682,7 +685,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=81"></script>
+<script src="/static/app.js?v=82"></script>
 <script src="/static/senha.js?v=3"></script>
 </body>
 </html>

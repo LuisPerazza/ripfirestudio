@@ -764,6 +764,8 @@ function maxSelectedArt(){
   }
   const ratio=Math.min(limW/bw,limH/bh)*0.999;
   if(e.type==='image'){ e.scaleX*=ratio; e.scaleY*=ratio; } else e.scale*=ratio;
+  // Fica dentro do retângulo do limite (centralizado, a partir do topo).
+  if(!isSleeve(currentSide)){ const nb=bounds(e); e.x+=210-(nb.minX+nb.maxX)/2; e.y+=limH/2-(nb.minY+nb.maxY)/2; }
   clampDragToCanvas(e);
   if(used&&used!==currentSize) selectSize(used); else render();
   const s=bounds(e);
@@ -778,9 +780,16 @@ const fmtCm=v=>Number(v).toFixed(1).replace('.0','').replace('.',',');
 function updateLimitLabels(lim){
   const lw=$('#limitLabelW'), lh=$('#limitLabelH');
   if(!lw||!lh) return;
-  const show=!!lim && !isSleeve(currentSide);
+  const show=!!lim && !isSleeve(currentSide), box=$('#sizeLimitBox');
   lw.hidden=lh.hidden=!show;
+  $('#printArea').classList.toggle('has-limit',show);
+  if(box) box.hidden=!show;
   if(!show) return;
+  // Retângulo no tamanho real do limite: centralizado e encostado no topo da área.
+  if(box){
+    box.style.width=Math.min(100,lim.w/cmPerUnitX()/420*100)+'%';
+    box.style.height=Math.min(100,lim.h/cmPerUnitY()/480*100)+'%';
+  }
   lw.textContent=`${currentSize} · largura máx. ${fmtCm(lim.w)} cm`;
   lh.textContent=`altura máx. ${fmtCm(lim.h)} cm`;
 }
