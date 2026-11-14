@@ -500,7 +500,16 @@ function bind(){
   onEnter(['#regName','#regEmail','#regPassword','#regPhone','#regCep','#regNumber','#regDocument'],submitRegister);
   $('#saleType').onchange=()=>{toggleSale();updatePrice()};$('#shirtColor').onchange=updateShirtVisual;$('#sizeGrid').oninput=updatePrice;
   $$('#sideTabs [data-side]').forEach(b=>b.onclick=()=>selectSide(b.dataset.side));
-  const addShirtFile=f=>{if(!f)return;if(!f.type.startsWith('image/'))return alert('Selecione um arquivo de imagem (PNG, JPG ou WEBP).');addImage(URL.createObjectURL(f),'UPLOAD').catch(err=>alert(err.message))};
+  // Camisa aceita os mesmos arquivos da chapa de DTF: PDF e TIFF viram imagem aqui mesmo.
+  const addShirtFile=async f=>{
+    if(!f) return;
+    const kind=gangFileKind(f);
+    if(!kind) return alert('Use PNG, JPG, WEBP, PDF ou TIFF.');
+    try{
+      const url=kind==='png'?URL.createObjectURL(f):(kind==='pdf'?await pdfPreview(f):await tiffPreview(f)).url;
+      await addImage(url,'UPLOAD');
+    }catch(err){ console.error(err); alert(err.message||'Não foi possível abrir esse arquivo.'); }
+  };
   $('#uploadArt').onchange=e=>{addShirtFile(e.target.files[0]);e.target.value=''};
   const shirtDropEl=$('#shirtDrop');
   ['dragenter','dragover'].forEach(evt=>shirtDropEl.addEventListener(evt,ev=>{ev.preventDefault();shirtDropEl.classList.add('drag')}));
