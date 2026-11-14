@@ -4290,7 +4290,7 @@ PUBLIC_ROUTES = {
     # LGPD (vale também pra quem não tem conta) e contagem anônima de visitas
     ("POST", "/api/lgpd/requests"), ("POST", "/api/metrics/hit"),
 }
-AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_staff_login", "require_customer", "require_art_viewer"}
+AUTH_DEPENDENCIES = {"require_admin", "require_admin_setup", "require_staff", "require_staff_login", "require_customer", "require_art_viewer", "require_buyer"}
 
 
 def unprotected_routes() -> list[str]:
