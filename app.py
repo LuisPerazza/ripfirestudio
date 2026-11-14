@@ -1128,6 +1128,17 @@ def shirt_models() -> list[dict[str, Any]]:
     return [{**m, **prices.get(m["id"], {})} for m in CONFIG.get("shirt_models") or []]
 
 
+DTF_PRICE_DEFAULT = 50.0  # R$ por metro do Somente DTF (o Admin muda na aba Custos)
+
+
+def dtf_price_per_m() -> float:
+    """Preço de venda do metro do DTF: um valor só pra qualquer metragem."""
+    try:
+        return float(get_setting("dtf_price_per_m") or DTF_PRICE_DEFAULT)
+    except ValueError:
+        return DTF_PRICE_DEFAULT
+
+
 def premium_dtf_discount() -> float:
     """Desconto (%) no metro do DTF pra quem tem premium ativo. Padrão 10."""
     pct = digital_cfg().get("premium_dtf_discount_pct")
@@ -1162,12 +1173,7 @@ def calc_order_total(
             raise HTTPException(400, "A chapa é mais larga que o rolo de DTF.")
         height_cm = max(height_px / dpi * 2.54, float(CONFIG.get("dtf_sheet_min_height_cm") or 0))
         meters = height_cm / 100
-        tiers = pricing.get("dtf_gang_sheet_tiers") or []
-        price_per_m = tiers[-1]["price_per_m"] if tiers else 39.9
-        for tier in tiers:
-            if meters <= tier["up_to_m"]:
-                price_per_m = tier["price_per_m"]
-                break
+        price_per_m = dtf_price_per_m()
         if premium and premium_dtf_discount():
             price_per_m = float(price_per_m) * (1 - premium_dtf_discount() / 100)
             data["premium_dtf_discount_pct"] = premium_dtf_discount()
@@ -1787,7 +1793,7 @@ def get_config() -> dict[str, Any]:
         "shirt_colors": CONFIG.get("shirt_colors"),
         "sizes": CONFIG.get("sizes"),
         "size_print_limits": CONFIG.get("size_print_limits"),
-        "pricing": CONFIG.get("pricing"),
+        "pricing": {**(CONFIG.get("pricing") or {}), "dtf_price_per_m": dtf_price_per_m()},
         "dtf_sheet_width_cm": CONFIG.get("dtf_sheet_width_cm"),
         "dtf_sheet_min_height_cm": CONFIG.get("dtf_sheet_min_height_cm"),
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY")),
@@ -3645,7 +3651,8 @@ def order_cost(row: dict[str, Any], data: dict[str, Any], costs: dict[str, Any])
 
 @app.get("/api/admin/costs", dependencies=[Depends(require_admin)])
 def admin_get_costs() -> dict[str, Any]:
-    return {"costs": get_costs(), "models": shirt_models()}
+    return {"costs": get_costs(), "models": shirt_models(), "dtf_price_per_m": dtf_price_per_m(),
+            "premium_dtf_discount": premium_dtf_discount()}
 
 
 def _money_num(v: Any, what: str = "valores") -> float:
@@ -3664,6 +3671,11 @@ def admin_save_costs(payload: dict[str, Any]) -> dict[str, Any]:
     if costs["fee_pix_pct"] > 100 or costs["fee_card_pct"] > 100:
         raise HTTPException(400, "A taxa vai de 0 a 100%.")
     set_setting("costs", json.dumps(costs))
+    if payload.get("dtf_price_per_m") not in (None, ""):
+        price = _money_num(payload["dtf_price_per_m"], "preços")
+        if price <= 0:
+            raise HTTPException(400, "O preço do metro do DTF precisa ser maior que zero.")
+        set_setting("dtf_price_per_m", str(price))
     # Preço de venda das camisetas prontas (vem junto, na mesma aba).
     sent = payload.get("shirt_prices")
     if isinstance(sent, dict):
@@ -3677,7 +3689,7 @@ def admin_save_costs(payload: dict[str, Any]) -> dict[str, Any]:
             else:
                 clean[m["id"]] = {"price": _money_num(got.get("price", m.get("price") or 0), "preços")}
         set_setting("shirt_prices", json.dumps(clean))
-    return {"ok": True, "costs": get_costs(), "models": shirt_models()}
+    return {"ok": True, "costs": get_costs(), "models": shirt_models(), "dtf_price_per_m": dtf_price_per_m()}
 
 
 # ---------- Clientes (Admin) ----------

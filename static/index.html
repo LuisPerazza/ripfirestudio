@@ -389,6 +389,11 @@
             <label><span>Boleto (por boleto)</span><div class="adm-money"><i>R$</i><input name="fee_boleto_fixed" type="number" min="0" step="0.01"></div></label>
             <label><span>Cartão e saldo Mercado Pago</span><div class="adm-money"><input name="fee_card_pct" type="number" min="0" max="100" step="0.01"><i>%</i></div></label>
           </div>
+          <h3 style="margin-top:22px">Preço de venda do DTF</h3>
+          <p class="adm-note">Quanto o cliente paga no Somente DTF, por metro de chapa (o custo de cima é o que você gasta pra imprimir).</p>
+          <div class="adm-cost-grid">
+            <label><span>Metro do DTF (cliente normal)</span><div class="adm-money"><i>R$</i><input name="dtf_price_per_m" type="number" min="0.01" step="0.01"></div><small id="dtfPremiumPrice"></small></label>
+          </div>
           <h3 style="margin-top:22px">Preço de venda da camiseta pronta</h3>
           <p class="adm-note">Quanto o cliente paga por peça, já estampada. Muda na hora no site.</p>
           <div id="costsShirts" class="adm-cost-grid"></div>
@@ -677,7 +682,7 @@
   </form>
 </dialog>
 
-<script src="/static/app.js?v=77"></script>
+<script src="/static/app.js?v=78"></script>
 <script src="/static/senha.js?v=3"></script>
 </body>
 </html>

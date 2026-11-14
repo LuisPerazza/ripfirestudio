@@ -2405,22 +2405,30 @@ async function loadCosts(){
   let d; try{ d=await admFetch('/api/admin/costs'); }catch(e){ return stat('#costsStatus',e.message,false); }
   const f=$('#costsForm');
   COST_KEYS.forEach(k=>f.elements[k].value=d.costs[k]??'');
+  f.elements.dtf_price_per_m.value=d.dtf_price_per_m??'';
+  ADM.premiumOff=d.premium_dtf_discount||0; showDtfPremium();
+  f.elements.dtf_price_per_m.oninput=showDtfPremium;
   $('#costsRoll').textContent=fmtCm(sheetWidthCm());
   const field=(label,attrs,val)=>`<label><span>${esc(label)}</span><div class="adm-money"><i>R$</i><input type="number" min="0" step="0.01" ${attrs} value="${val??''}"></div></label>`;
   $('#costsShirts').innerHTML=d.models.map(m=>m.fabrics
     ?m.fabrics.map(fb=>field(`${m.name} ${fb.name}`,`data-shirt="${m.id}" data-fabric="${fb.id}"`,fb.price)).join('')
     :field(m.name,`data-shirt="${m.id}"`,m.price)).join('');
 }
+function showDtfPremium(){
+  const v=Number($('#costsForm').elements.dtf_price_per_m.value)||0;
+  $('#dtfPremiumPrice').textContent=v?`Premium paga ${money(v*(1-(ADM.premiumOff||0)/100))} (${ADM.premiumOff||0}% de desconto).`:'';
+}
 async function saveCosts(ev){
   ev.preventDefault();
   const f=ev.currentTarget, body={shirt_prices:{}};
   COST_KEYS.forEach(k=>body[k]=f.elements[k].value||0);
+  body.dtf_price_per_m=f.elements.dtf_price_per_m.value;
   $$('#costsShirts [data-shirt]').forEach(i=>{
     const m=body.shirt_prices[i.dataset.shirt]||(body.shirt_prices[i.dataset.shirt]={});
     if(i.dataset.fabric) (m.fabrics||(m.fabrics=[])).push({id:i.dataset.fabric,price:i.value||0}); else m.price=i.value||0;
   });
   try{ const d=await admFetch('/api/admin/costs',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    CONFIG.shirt_models=d.models; if(typeof updatePrice==='function') updatePrice();
+    CONFIG.shirt_models=d.models; CONFIG.pricing={...CONFIG.pricing,dtf_price_per_m:d.dtf_price_per_m}; if(typeof updatePrice==='function') updatePrice();
     stat('#costsStatus','Salvo. O painel e os preços do site já usam os valores novos.',true); ADM.dash=null; }
   catch(e){ stat('#costsStatus',e.message,false); }
 }
@@ -2964,9 +2972,7 @@ const premiumDtfOff=()=>hasPremium()?Number(CONFIG.premium_dtf_discount)||0:0;
 function calcGangTotal(){
   if(!CONFIG||!gangPieces.length)return 0; // chapa vazia não tem preço (antes já mostrava o mínimo de 2 m)
   const meters=(gangHeightCm||0)/100;
-  const tiers=(CONFIG.pricing&&CONFIG.pricing.dtf_gang_sheet_tiers)||[];
-  let pricePerM=tiers.length?tiers[tiers.length-1].price_per_m:39.9;
-  for(const t of tiers){ if(meters<=t.up_to_m){ pricePerM=t.price_per_m; break; } }
+  const pricePerM=Number(CONFIG.pricing&&CONFIG.pricing.dtf_price_per_m)||50; // um preço só por metro
   return Math.max(meters,0.1)*pricePerM*(1-premiumDtfOff()/100);
 }
 function renderGangRulers(){
