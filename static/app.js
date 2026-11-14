@@ -1340,8 +1340,12 @@ async function afterOrderCreated(d,statusSel){
   // Sem conta de cliente não há como pagar: o pedido do Admin é sempre de teste.
   if(adminBuyer()||(staffArts()&&confirm(`Pedido ${d.order_number} criado (${money(d.total)}).\n\nVocê está logado como Admin. Aprovar como PEDIDO DE TESTE, sem cobrança?\n\nOK = aprovar como teste · Cancelar = seguir para o pagamento normal`))){
     try{ await admFetch(`/api/admin/orders/${d.id}/test-pay`,{method:'POST'});
-      stat(statusSel,`Pedido de teste ${d.order_number} aprovado sem cobrança. Ele já aparece ${currentCustomer?'em Minha conta e ':''}no Admin, marcado como TESTE.`,true);
-      if(typeof loadProfile==='function') loadProfile().catch(()=>{});
+      const msg=`Pedido de teste ${d.order_number} aprovado sem cobrança, marcado como TESTE.`;
+      stat(statusSel,msg,true);
+      // Leva pros pedidos: Minha conta (conta de cliente aberta) ou a lista do Admin.
+      // Só com o login de Admin, o loadProfile abria o login de cliente.
+      if(currentCustomer){ profileView='orders'; tab('profile'); stat('#profileNotice',msg,true); }
+      else{ ADM.pane='orders'; tab('admin'); }
     }catch(e){ stat(statusSel,`Pedido ${d.order_number} criado, mas não deu para aprovar como teste: ${e.message}`,false); }
     return;
   }
