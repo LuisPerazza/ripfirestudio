@@ -67,12 +67,12 @@ def load_config() -> dict:
         return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     print("Primeira vez: configure a sincronização.\n")
     site = input("Endereço do site (ex.: https://ripfirestudio.onrender.com): ").strip().rstrip("/")
-    print("Use um usuário da equipe com papel Produção (crie em Admin > Segurança).")
+    print('Use o usuário da equipe com papel "PC servidor (sincronização)" (crie em Admin > Segurança).')
     user = input("Usuário: ").strip()
     password = getpass.getpass("Senha (não aparece ao digitar): ")
-    print("Pasta de produção: pode ser deste PC (D:\\PEDIDOS_DTF_PAGOS) ou de rede")
+    print("Pasta de produção: pode ser deste PC (C:\\Pedidos Ripfire) ou de rede")
     print("(\\\\PC-IMPRESSORA\\DTF\\PEDIDOS). Em pasta de rede, use o caminho com \\\\, não a letra do drive.")
-    folder = input("Pasta de produção [D:\\PEDIDOS_DTF_PAGOS]: ").strip().strip('"') or "D:\\PEDIDOS_DTF_PAGOS"
+    folder = input("Pasta de produção [C:\\Pedidos Ripfire]: ").strip().strip('"') or "C:\\Pedidos Ripfire"
     cfg = {"site_url": site, "admin_user": user, "admin_senha": password,
            "pasta_producao": folder, "intervalo_segundos": 60}
     CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")

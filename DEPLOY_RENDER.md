@@ -109,9 +109,11 @@ atualize o `SITE_URL` e, se usa login com Google, adicione o domínio em
 O site não copia mais nada para o PC. Quem traz os pedidos pagos é o
 `sync_producao.py`:
 
-1. Copie `sync_producao.py` e `sincronizar_producao.bat` para uma pasta no PC
-   (ex.: `C:\Ripfire`). Precisa do Python instalado; o programa instala
-   sozinho o Pillow e o pypdf na primeira vez.
+1. Copie `sync_producao.py`, `sincronizar_producao.bat` e `instalar_servidor.bat`
+   para o PC servidor e rode o `instalar_servidor.bat`: ele instala o Python
+   (se faltar), põe o programa em `C:\Ripfire`, cria e compartilha
+   `C:\Pedidos Ripfire` na rede (`\\<PC>\PedidosRipfire`) e faz o programa
+   abrir sozinho ao ligar o PC. O Pillow e o pypdf vêm na primeira vez.
 2. No Admin, aba **Segurança**, crie um usuário com papel **PC servidor
    (sincronização)** (é só para o programa: vê os pedidos com o valor, que vai
    no txt, e não usa 2FA).
