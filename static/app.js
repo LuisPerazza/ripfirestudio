@@ -48,6 +48,9 @@ function loadCustomerFromStorage(){
   if(currentCustomer && !currentCustomer.token){ currentCustomer=null; saveCustomerToStorage(); }
 }
 function customerHeaders(){return {'X-Customer-Token': currentCustomer?.token||''}}
+// Admin logado sem conta de cliente pode criar pedido (de teste).
+const adminBuyer=()=>!currentCustomer&&!!adminKey&&adminRole==='admin';
+const buyerHeaders=()=>({...customerHeaders(),...(adminBuyer()?{'X-Admin-Token':adminKey}:{})});
 // Atualiza os dados da conta (o premium muda quando o pagamento é aprovado).
 async function refreshCustomer(){
   if(!currentCustomer) return;
@@ -62,7 +65,7 @@ function saveCustomerToStorage(){
   try{ if(currentCustomer) localStorage.setItem('ripfire_customer', JSON.stringify(currentCustomer)); else localStorage.removeItem('ripfire_customer'); }catch{}
 }
 function customerPayload(){
-  const c=currentCustomer||{};
+  const c=currentCustomer||(adminBuyer()?{full_name:`TESTE ${adminUser||'Admin'}`}:{});
   return {name:c.full_name||'', email:c.email||'', whatsapp:c.phone||'', cep:c.cep||'', address_number:c.address_number||'', document:c.document||''};
 }
 // Botão do menu: "Entrar", ou a inicial + primeiro nome do cliente logado,
@@ -1301,7 +1304,7 @@ async function sendOrder(data,files,statusSel){
     const dpi=Number(CONFIG.dpi)||300;
     const ready=await Promise.all(files.map(async([field,blob,name])=>[field,/\.png$/i.test(name)&&!field.startsWith('source_')?await pngWithDpi(blob,dpi):blob,name]));
     const ext=name=>((/\.[a-z0-9]+$/i.exec(name||'')||['.png'])[0]).toLowerCase();
-    const r=await fetch('/api/orders/uploads',{method:'POST',headers:{...customerHeaders(),'Content-Type':'application/json'},
+    const r=await fetch('/api/orders/uploads',{method:'POST',headers:{...buyerHeaders(),'Content-Type':'application/json'},
       body:JSON.stringify({files:ready.map(([field,blob,name])=>({field,size:blob.size,ext:ext(name)}))})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) return {r,d};
@@ -1320,7 +1323,7 @@ async function sendOrder(data,files,statusSel){
   }else{
     files.forEach(([field,blob,name])=>fd.append(field,blob,name));
   }
-  const r=await fetch('/api/orders',{method:'POST',headers:customerHeaders(),body:fd});
+  const r=await fetch('/api/orders',{method:'POST',headers:buyerHeaders(),body:fd});
   return {r,d:await r.json().catch(()=>({}))};
 }
 /* ---------- Pagamento (Mercado Pago) ---------- */
@@ -1334,9 +1337,10 @@ async function openCheckout(orderId){
 }
 async function afterOrderCreated(d,statusSel){
   // Admin logado: pode aprovar como teste, sem cobrança (vai pra produção marcado TESTE).
-  if(staffArts()&&confirm(`Pedido ${d.order_number} criado (${money(d.total)}).\n\nVocê está logado como Admin. Aprovar como PEDIDO DE TESTE, sem cobrança?\n\nOK = aprovar como teste · Cancelar = seguir para o pagamento normal`)){
+  // Sem conta de cliente não há como pagar: o pedido do Admin é sempre de teste.
+  if(adminBuyer()||(staffArts()&&confirm(`Pedido ${d.order_number} criado (${money(d.total)}).\n\nVocê está logado como Admin. Aprovar como PEDIDO DE TESTE, sem cobrança?\n\nOK = aprovar como teste · Cancelar = seguir para o pagamento normal`))){
     try{ await admFetch(`/api/admin/orders/${d.id}/test-pay`,{method:'POST'});
-      stat(statusSel,`Pedido de teste ${d.order_number} aprovado sem cobrança. Ele já aparece em Minha conta e no Admin, marcado como TESTE.`,true);
+      stat(statusSel,`Pedido de teste ${d.order_number} aprovado sem cobrança. Ele já aparece ${currentCustomer?'em Minha conta e ':''}no Admin, marcado como TESTE.`,true);
       if(typeof loadProfile==='function') loadProfile().catch(()=>{});
     }catch(e){ stat(statusSel,`Pedido ${d.order_number} criado, mas não deu para aprovar como teste: ${e.message}`,false); }
     return;
@@ -1371,7 +1375,7 @@ function handlePaymentReturn(){
   verifyPayment(ref,null,q.get('status'));
 }
 async function createOrder(){
-  if(!currentCustomer){ openAuthModal(); return stat('#checkoutStatus','Entre ou crie uma conta antes de finalizar o pedido.',false); }
+  if(!currentCustomer&&!adminBuyer()){ openAuthModal(); return stat('#checkoutStatus','Entre ou crie uma conta antes de finalizar o pedido.',false); }
   if(!Object.values(sidesElements).some(list=>list.length))
     // Com as abas de manga desligadas (index.html), a mensagem não fala delas.
     return stat('#checkoutStatus',$('#sideTabs [data-side="SLEEVE_R"]')?'Adicione uma arte na frente, nas costas ou em uma das mangas.':'Adicione uma arte na frente ou nas costas.',false);
@@ -1424,7 +1428,7 @@ async function createOrder(){
       placeBack&&['placement_back',placeBack,'posicao_costas.jpg'],
     ].filter(Boolean);
     const {r,d}=await sendOrder(data,files,'#checkoutStatus');
-    if(r.status===401){ logoutCustomer(); openAuthModal(); }
+    if(r.status===401){ if(adminBuyer()){ clearAdmin(); openAdminLogin('Sua sessão do Admin terminou. Entre de novo.'); } else { logoutCustomer(); openAuthModal(); } }
     if(!r.ok)throw new Error(orderError(r,d));
     if(adminKey) loadOrders();
     await afterOrderCreated(d,'#checkoutStatus');
@@ -3300,7 +3304,7 @@ async function gangOriginalFiles(){
   return out;
 }
 async function createGangOrder(){
-  if(!currentCustomer){ openAuthModal(); return stat('#checkoutStatusGang','Entre ou crie uma conta antes de finalizar o pedido.',false); }
+  if(!currentCustomer&&!adminBuyer()){ openAuthModal(); return stat('#checkoutStatusGang','Entre ou crie uma conta antes de finalizar o pedido.',false); }
   if(!gangItems.length) return stat('#checkoutStatusGang','Adicione ao menos uma imagem.',false);
   const btn=$('#checkoutBtnGang');btn.disabled=true; // evita pedido duplicado no clique duplo
   try{
@@ -3320,7 +3324,7 @@ async function createGangOrder(){
     stat('#checkoutStatusGang','Separando as artes...',true);
     const originals=await gangOriginalFiles();
     const {r,d}=await sendOrder(data,[['design',p.blob,'chapa_producao.png'],...originals],'#checkoutStatusGang');
-    if(r.status===401){ logoutCustomer(); openAuthModal(); }
+    if(r.status===401){ if(adminBuyer()){ clearAdmin(); openAdminLogin('Sua sessão do Admin terminou. Entre de novo.'); } else { logoutCustomer(); openAuthModal(); } }
     if(!r.ok) throw new Error(orderError(r,d));
     if(adminKey) loadOrders();
     await afterOrderCreated(d,'#checkoutStatusGang');

@@ -2598,6 +2598,20 @@ def admin_from_headers(request: Request, x_admin_token: str | None) -> dict[str,
     return staff
 
 
+def require_buyer(request: Request, x_customer_token: str | None = Header(None),
+                  x_admin_token: str | None = Header(None)) -> dict[str, Any]:
+    """Quem pode criar pedido: cliente logado, ou Admin logado sem conta de
+    cliente (pedido de teste, aprovado sem cobrança em admin_test_pay)."""
+    customer = customer_from_token(x_customer_token)
+    if customer:
+        return customer
+    admin = admin_from_headers(request, x_admin_token)
+    if not admin:
+        raise HTTPException(401, "Entre na sua conta de novo.")
+    # Não é uma conta de cliente: o id só separa os envios e o limite de pedidos.
+    return {"id": "admin-" + re.sub(r"[^A-Za-z0-9_-]", "_", admin["user"]), "premium_until": 0}
+
+
 def require_art_viewer(request: Request, x_customer_token: str | None = Header(None),
                        x_admin_token: str | None = Header(None)) -> dict[str, Any]:
     """Cliente logado ou Admin logado: quem pode abrir o arquivo de uma arte."""
@@ -2946,7 +2960,7 @@ class UploadRequest(BaseModel):
 
 
 @app.post("/api/orders/uploads")
-def create_order_uploads(payload: UploadRequest, buyer: dict[str, Any] = Depends(require_customer)) -> dict[str, Any]:
+def create_order_uploads(payload: UploadRequest, buyer: dict[str, Any] = Depends(require_buyer)) -> dict[str, Any]:
     if not STORE:
         raise HTTPException(503, "Envio direto não configurado neste servidor.")
     check_rate_limit(f"uploads:{buyer['id']}", 30, 3600,
@@ -3043,7 +3057,7 @@ async def create_order(
     placement_front: UploadFile | None = File(None),
     placement_back: UploadFile | None = File(None),
     upload_token: str | None = Form(None),
-    buyer: dict[str, Any] = Depends(require_customer),
+    buyer: dict[str, Any] = Depends(require_buyer),
 ) -> dict[str, Any]:
     # Dono do pedido (aparece em "Minha conta"). Antes o login era exigido só
     # no navegador: qualquer um podia mandar pedidos com arquivos enormes
@@ -3622,7 +3636,7 @@ def mark_wa_notified(order_id: str, staff: dict[str, Any] = Depends(require_staf
 
 
 # ---------- Pedido de teste (Admin) ----------
-# O Admin, logado também numa conta de cliente, cria o pedido pelo site e aprova
+# O Admin (com ou sem conta de cliente aberta) cria o pedido pelo site e aprova
 # sem cobrança: segue o caminho todo (pasta da produção, etapas, WhatsApp) com
 # payment_ref "TESTE", fora do Painel e sem evento de compra no GA/Meta.
 @app.post("/api/admin/orders/{order_id}/test-pay", dependencies=[Depends(require_admin)])
