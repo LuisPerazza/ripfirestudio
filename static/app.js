@@ -1333,6 +1333,14 @@ async function openCheckout(orderId){
   location.href=d.url;
 }
 async function afterOrderCreated(d,statusSel){
+  // Admin logado: pode aprovar como teste, sem cobrança (vai pra produção marcado TESTE).
+  if(staffArts()&&confirm(`Pedido ${d.order_number} criado (${money(d.total)}).\n\nVocê está logado como Admin. Aprovar como PEDIDO DE TESTE, sem cobrança?\n\nOK = aprovar como teste · Cancelar = seguir para o pagamento normal`)){
+    try{ await admFetch(`/api/admin/orders/${d.id}/test-pay`,{method:'POST'});
+      stat(statusSel,`Pedido de teste ${d.order_number} aprovado sem cobrança. Ele já aparece em Minha conta e no Admin, marcado como TESTE.`,true);
+      if(typeof loadProfile==='function') loadProfile().catch(()=>{});
+    }catch(e){ stat(statusSel,`Pedido ${d.order_number} criado, mas não deu para aprovar como teste: ${e.message}`,false); }
+    return;
+  }
   if(!CONFIG.online_payment) return stat(statusSel,`Pedido ${d.order_number} criado (${money(d.total)}). O pagamento pelo site ainda está sendo ativado: chame a loja no WhatsApp para pagar.`,true);
   stat(statusSel,`Pedido ${d.order_number} criado (${money(d.total)}). Abrindo o pagamento...`,true);
   track('begin_checkout',{value:d.total,currency:'BRL'});
@@ -1613,6 +1621,11 @@ async function requestPremium(){
     if(r.status===401){ logoutCustomer(); openAuthModal(); }
     if(!r.ok) throw new Error(d.detail||'Erro');
     if(adminKey) loadOrders();
+    if(staffArts()&&confirm(`Premium criado (${money(d.total)}).\n\nVocê está logado como Admin. Aprovar como TESTE, sem cobrança?\n\nOK = aprovar como teste · Cancelar = pagamento normal`)){
+      try{ await admFetch(`/api/admin/orders/${d.id}/test-pay`,{method:'POST'}); await refreshCustomer();
+        return {ok:true,msg:`Premium de teste liberado (pedido ${d.order_number}, sem cobrança).`}; }
+      catch(e){ return {ok:false,msg:`Pedido ${d.order_number} criado, mas não deu para aprovar como teste: ${e.message}`}; }
+    }
     if(CONFIG.online_payment){
       track('begin_checkout',{value:d.total,currency:'BRL',items:[{item_name:'Premium'}]});
       try{ await openCheckout(d.id); return {ok:true,msg:`Pedido ${d.order_number} criado. Abrindo o pagamento...`}; }
@@ -2316,7 +2329,7 @@ function renderOrders(){
         <td>${esc(ORDER_TYPES[o.sale_type]||o.sale_type)}<small>${esc(orderLine(o))}</small></td>
         ${ADM.money?`<td><b>${money(o.total)}</b>${profit==null?'':`<small>custo ${money(o.cost)} · <span class="${profit<0?'neg':'pos'}">lucro ${money(profit)}</span></small>`}</td>`:''}
         <td>${prod?`<select class="adm-stage-sel st-${k}" data-stage="${o.id}" aria-label="Etapa do pedido ${esc(o.order_number)}">${STAGES.map(([sk,sl])=>`<option value="${sk}"${sk===k?' selected':''}>${sl}</option>`).join('')}</select>`
-          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.status==='CANCELADO'&&o.cancel_by?`<small>${o.payment_status==='REFUNDED'?'estornado · ':''}por ${esc(o.cancel_by)}${o.cancel_reason&&o.cancel_by!=='cliente'?` · ${esc(o.cancel_reason)}`:''}</small>`:''}${o.status!=='CANCELADO'&&o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
+          :`<span class="adm-pill st-${k}">${FILTER_LABEL[k]}</span>`}${o.payment_ref==='TESTE'?'<span class="adm-pill st-TESTE">TESTE</span>':''}${o.status==='CANCELADO'&&o.cancel_by?`<small>${o.payment_status==='REFUNDED'?'estornado · ':''}por ${esc(o.cancel_by)}${o.cancel_reason&&o.cancel_by!=='cliente'?` · ${esc(o.cancel_reason)}`:''}</small>`:''}${o.status!=='CANCELADO'&&o.stage_by?`<small>por ${esc(o.stage_by)}${o.stage_at?` · ${new Date(o.stage_at*1000).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'})}`:''}</small>`:''}</td>
         <td class="adm-actions">${waCell(o)}${placementSides(o).length?`<button type="button" class="adm-btn sm adm-pos-btn" data-place="${o.id}" title="Onde o cliente posicionou o DTF na camisa">Ver posição</button>`:''}${adminRole==='admin'&&o.payment_status!=='PAID'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm" data-pay="${o.id}" data-num="${esc(o.order_number)}" title="Pagamento recebido fora do site">Marcar pago</button>`:''}
           ${adminRole==='admin'&&o.status!=='CANCELADO'?`<button type="button" class="adm-btn sm danger" data-cancel="${o.id}">Cancelar</button>`:''}
           ${adminRole==='admin'&&o.status==='CANCELADO'?`<button type="button" class="adm-btn sm danger" data-forget="${o.id}">Apagar</button>`:''}

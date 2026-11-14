@@ -1353,7 +1353,7 @@ def mark_order_paid(order_id: str, payment_ref: str | None = None, method: str =
                payment_ref=COALESCE(?, payment_ref), payment_method=? WHERE id=? AND payment_status!='PAID'""",
             (payment_ref, method, order_id)
         ).rowcount
-    if newly_paid:
+    if newly_paid and payment_ref != "TESTE":
         # Em segundo plano: o webhook do Mercado Pago tem 22 s pra receber o 200.
         threading.Thread(target=send_server_purchase, args=(order_id,), daemon=True).start()
     return finish_paid_order(order_id)
@@ -3621,6 +3621,23 @@ def mark_wa_notified(order_id: str, staff: dict[str, Any] = Depends(require_staf
     return {"ok": True, "wa_notified_at": now, "wa_notified_by": staff["user"]}
 
 
+# ---------- Pedido de teste (Admin) ----------
+# O Admin, logado também numa conta de cliente, cria o pedido pelo site e aprova
+# sem cobrança: segue o caminho todo (pasta da produção, etapas, WhatsApp) com
+# payment_ref "TESTE", fora do Painel e sem evento de compra no GA/Meta.
+@app.post("/api/admin/orders/{order_id}/test-pay", dependencies=[Depends(require_admin)])
+def admin_test_pay(order_id: str) -> dict[str, Any]:
+    row = load_order(order_id)
+    if not row:
+        raise HTTPException(404, "Pedido não encontrado.")
+    if row["payment_status"] == "PAID":
+        raise HTTPException(400, "Esse pedido já está pago.")
+    if row["status"] == "CANCELADO":
+        raise HTTPException(400, "Pedido cancelado.")
+    path = mark_order_paid(order_id, "TESTE", "teste")
+    return {"ok": True, "order_number": row["order_number"], "production_drop_path": path}
+
+
 # ---------- Custos (Admin) ----------
 # Guardados na tabela settings (vão pro Supabase junto com o resto). Com eles o
 # painel calcula o custo e o lucro de cada pedido pago.
@@ -3789,7 +3806,7 @@ def admin_dashboard(days: int = 30) -> dict[str, Any]:
             (since_ts,))]
         orders = [dict(r) for r in con.execute(
             f"""SELECT {day_expr} AS day, sale_type, payment_status, status, stage, total, data_json, payment_method
-                FROM orders WHERE created_at >= ?""", (since_ts,))]
+                FROM orders WHERE created_at >= ? AND COALESCE(payment_ref,'') != 'TESTE'""", (since_ts,))]
         totals = con.execute(
             """SELECT (SELECT COUNT(*) FROM customers) AS customers,
                       (SELECT COUNT(*) FROM customers WHERE premium_until > ?) AS premium_active,

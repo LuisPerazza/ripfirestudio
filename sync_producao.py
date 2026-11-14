@@ -395,8 +395,10 @@ def order_text(order: dict, data: dict, sheet_name: str, arts: list[tuple[dict, 
         f"Total de peças: {total_qty}",
         "",
         "VALOR COBRADO",
-        f"Total: {money(order.get('total'))}",
+        "Pedido de teste: nada foi cobrado." if order.get("payment_ref") == "TESTE" else f"Total: {money(order.get('total'))}",
     ]
+    if order.get("payment_ref") == "TESTE":
+        lines = ["*** PEDIDO DE TESTE - SEM COBRANCA ***", ""] + lines
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -696,7 +698,10 @@ def shirt_text(order, data, product, sizes, art_rows, sheet_rows, sleeve_rows) -
     lines += ["", "CHAPA DE IMPRESSÃO"]
     for i, (fname, h) in enumerate(sheet_rows, start=1):
         lines.append(f"{i} de {len(sheet_rows)}: {cm(SHEET_W_DEFAULT)} x {cm(h)} cm - {fname}")
-    lines += ["", "VALOR COBRADO", f"Total: {money(order.get('total'))}"]
+    if order.get("payment_ref") == "TESTE":
+        lines = ["*** PEDIDO DE TESTE - SEM COBRANCA ***", ""] + lines
+    lines += ["", "VALOR COBRADO", "Pedido de teste: nada foi cobrado." if order.get("payment_ref") == "TESTE"
+              else f"Total: {money(order.get('total'))}"]
     return "\r\n".join(lines) + "\r\n"
 
 
